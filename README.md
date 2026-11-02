@@ -19,13 +19,7 @@
 
 ## 跑起来
 
-需要 Go 1.27.3 或更高。桌面框架用的是 fork（比上游多了认证质询回调和快捷键长按连发），本仓库通过 `replace` 指向本地目录，所以先把这个 fork 的分支放在 `~/project/mygo`：
-
-```sh
-git clone -b feature/http-auth-challenge git@github.com:iWorld-y/mygo.git ~/project/mygo
-```
-
-分支名别省：fork 的 `main` 还是上游原样，缺了认证回调和长按连发，编译会报找不到方法。路径不一样的话改 `go.mod` 里那行 `replace`。
+需要 Go 1.27.3 或更高。项目使用上游 MyGo，编译时 Go 会按 `go.mod` 按需下载依赖。
 
 ```sh
 go build -o ghostfish .
@@ -49,6 +43,7 @@ go build -o ghostfish .
 | `⌘⇧H` | 隐藏 / 显示窗口 |
 
 不是 macOS 的话，`⌘` 换成 `Ctrl`。
+macOS 上按住透明度快捷键可连续调整；其他平台遵循框架的快捷键行为。
 
 ## 需要密码的站点
 
@@ -60,7 +55,7 @@ go build -o ghostfish .
 
 凭据会先拿去做一次真实请求验证，通过了才存进钥匙串，之后同一主机不用再输。网址里直接写 `https://用户名:密码@主机/` 也仍然有效，那条路不经过钥匙串。
 
-目前只接管 Basic；Digest、NTLM 和客户端证书交给 webview 自己的默认处理。
+启动时只为目标主机的 Basic 认证准备凭据。启用凭据处理器后，其他主机、代理或非 Basic 的 HTTP 认证质询会被取消；未启用凭据处理器时，认证由 webview 按平台默认方式处理。
 
 ## 状态保存在哪
 

@@ -115,11 +115,11 @@ func TestVerifyCredential(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ok, status, err := verifyCredential(srv.URL, &mygo.Credential{Username: "user", Password: "pass"})
+	ok, status, err := verifyCredential(srv.URL, &mygo.AuthResponse{Username: "user", Password: "pass"})
 	if err != nil || !ok || status != http.StatusOK {
 		t.Fatalf("verifyCredential(right) = (%v, %d, %v), want (true, 200, nil)", ok, status, err)
 	}
-	ok, status, err = verifyCredential(srv.URL, &mygo.Credential{Username: "user", Password: "wrong"})
+	ok, status, err = verifyCredential(srv.URL, &mygo.AuthResponse{Username: "user", Password: "wrong"})
 	if err != nil || ok || status != http.StatusUnauthorized {
 		t.Fatalf("verifyCredential(wrong) = (%v, %d, %v), want (false, 401, nil)", ok, status, err)
 	}
@@ -140,5 +140,30 @@ func TestCredentialFromEnv(t *testing.T) {
 	t.Setenv(authEnv, "no-colon")
 	if got := credentialFromEnv(); got != nil {
 		t.Fatalf("credentialFromEnv = %+v, want nil without a colon", got)
+	}
+}
+
+func TestAuthHandler(t *testing.T) {
+	cred := &mygo.AuthResponse{Username: "user", Password: "pass"}
+	handle := authHandler("example.com", cred)
+	requests := []struct {
+		name    string
+		request mygo.AuthRequest
+		want    mygo.AuthResponse
+	}{
+		{"其他主机不提供凭据", mygo.AuthRequest{Host: "other.example.com", Scheme: "basic"}, mygo.AuthResponse{}},
+		{"代理不提供凭据", mygo.AuthRequest{Host: "example.com", Scheme: "basic", IsProxy: true}, mygo.AuthResponse{}},
+		{"其他认证方式不提供凭据", mygo.AuthRequest{Host: "example.com", Scheme: "digest"}, mygo.AuthResponse{}},
+		{"主机名忽略大小写", mygo.AuthRequest{Host: "EXAMPLE.COM", Scheme: "basic"}, *cred},
+		{"相同主机再试一次", mygo.AuthRequest{Host: "example.com", Scheme: "basic"}, *cred},
+		{"第三次停止提供", mygo.AuthRequest{Host: "example.com", Scheme: "basic"}, mygo.AuthResponse{}},
+		{"后续继续停止提供", mygo.AuthRequest{Host: "example.com", Scheme: "basic"}, mygo.AuthResponse{}},
+	}
+	for _, req := range requests {
+		t.Run(req.name, func(t *testing.T) {
+			if got := handle(req.request); got != req.want {
+				t.Fatalf("handle(%+v) = %+v, want %+v", req.request, got, req.want)
+			}
+		})
 	}
 }

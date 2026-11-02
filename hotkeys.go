@@ -34,7 +34,7 @@ func (a *app) registerHotkeys() int {
 	for _, h := range a.hotkeys() {
 		register := mygo.GlobalShortcut.Register
 		if h.repeat {
-			register = mygo.GlobalShortcut.RegisterRepeat
+			register = registerRepeatShortcut
 		}
 		if err := register(h.acc, h.fn); err != nil {
 			fmt.Fprintf(os.Stderr, "ghostfish: 快捷键 %s（%s）注册失败：%v\n", h.acc, h.label, err)

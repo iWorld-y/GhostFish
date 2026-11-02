@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 
 	"github.com/egoist/mygo"
 )
@@ -86,24 +85,7 @@ func (a *app) start() {
 	})
 
 	if cred != nil {
-		host := a.authHost
-		attempts, warned := 0, false
-		a.win.Page().SetAuthenticationHandler(func(req mygo.AuthenticationRequest) *mygo.Credential {
-			if !strings.EqualFold(req.Host, host) {
-				return nil
-			}
-			// 同一份凭据给两次就够：再被质询说明服务器不认，
-			// 一直给只会让 webview 无限重试，把服务器刷成重放攻击。
-			attempts++
-			if attempts > 2 {
-				if !warned {
-					warned = true
-					fmt.Fprintln(os.Stderr, "ghostfish: 凭据被服务器拒了，已停止重试；用户名或密码大概率不对")
-				}
-				return nil
-			}
-			return cred
-		})
+		a.win.Page().SetAuthHandler(authHandler(a.authHost, cred))
 	}
 
 	a.win.Show()

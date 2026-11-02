@@ -33,7 +33,7 @@ type authNeed struct {
 
 // probe 用 GET 请求一次网址，和浏览器做的事情一致。
 // 不跟随跳转，否则 401 会被跳转掩盖。
-func probe(rawURL string, cred *mygo.Credential) (*http.Response, error) {
+func probe(rawURL string, cred *mygo.AuthResponse) (*http.Response, error) {
 	client := &http.Client{
 		Timeout: probeTimeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -113,7 +113,7 @@ func parseChallenge(header string) (scheme, realm string) {
 
 // verifyCredential 拿凭据真请求一次，返回是否通过和看到的状态码，
 // 状态码用来在失败时告诉用户服务器回了什么。
-func verifyCredential(rawURL string, cred *mygo.Credential) (bool, int, error) {
+func verifyCredential(rawURL string, cred *mygo.AuthResponse) (bool, int, error) {
 	resp, err := probe(rawURL, cred)
 	if err != nil {
 		return false, 0, err
@@ -123,7 +123,7 @@ func verifyCredential(rawURL string, cred *mygo.Credential) (bool, int, error) {
 }
 
 // resolveCredential 依次尝试环境变量、系统钥匙串、终端输入。
-func resolveCredential(need *authNeed) *mygo.Credential {
+func resolveCredential(need *authNeed) *mygo.AuthResponse {
 	if c := credentialFromEnv(); c != nil {
 		fmt.Fprintln(os.Stderr, "ghostfish: 用环境变量里的凭据")
 		return c
@@ -135,7 +135,7 @@ func resolveCredential(need *authNeed) *mygo.Credential {
 	return promptCredential(need)
 }
 
-func credentialFromEnv() *mygo.Credential {
+func credentialFromEnv() *mygo.AuthResponse {
 	raw := strings.TrimSpace(os.Getenv(authEnv))
 	if raw == "" {
 		return nil
@@ -144,24 +144,24 @@ func credentialFromEnv() *mygo.Credential {
 	if !ok || user == "" {
 		return nil
 	}
-	return &mygo.Credential{Username: user, Password: pass}
+	return &mygo.AuthResponse{Username: user, Password: pass}
 }
 
 func secretKey(host string) string { return secretPrefix + host }
 
-func credentialFromKeychain(host string) *mygo.Credential {
+func credentialFromKeychain(host string) *mygo.AuthResponse {
 	raw, err := mygo.Secrets.Get(secretKey(host))
 	if err != nil {
 		return nil
 	}
-	var c mygo.Credential
+	var c mygo.AuthResponse
 	if err := json.Unmarshal(raw, &c); err != nil || c.Username == "" {
 		return nil
 	}
 	return &c
 }
 
-func saveCredential(host string, cred *mygo.Credential) error {
+func saveCredential(host string, cred *mygo.AuthResponse) error {
 	raw, err := json.Marshal(cred)
 	if err != nil {
 		return err
@@ -170,7 +170,7 @@ func saveCredential(host string, cred *mygo.Credential) error {
 }
 
 // promptCredential 在终端里问用户名和密码，密码不回显。
-func promptCredential(need *authNeed) *mygo.Credential {
+func promptCredential(need *authNeed) *mygo.AuthResponse {
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
 		return nil
 	}
@@ -190,11 +190,11 @@ func promptCredential(need *authNeed) *mygo.Credential {
 	if err != nil {
 		return nil
 	}
-	return &mygo.Credential{Username: user, Password: string(pass)}
+	return &mygo.AuthResponse{Username: user, Password: string(pass)}
 }
 
 // prepareAuth 在开窗口之前把认证准备好，避免窗口出来后卡在 401。
-func (a *app) prepareAuth() *mygo.Credential {
+func (a *app) prepareAuth() *mygo.AuthResponse {
 	need := probeAuth(a.target)
 	if need == nil {
 		return nil
@@ -225,4 +225,23 @@ func (a *app) prepareAuth() *mygo.Credential {
 	}
 	a.authHost = need.Host
 	return cred
+}
+
+// authHandler 只向目标主机的 Basic 认证提供凭据，并在两次尝试后停止。
+func authHandler(host string, cred *mygo.AuthResponse) func(mygo.AuthRequest) mygo.AuthResponse {
+	attempts, warned := 0, false
+	return func(req mygo.AuthRequest) mygo.AuthResponse {
+		if req.IsProxy || !strings.EqualFold(req.Host, host) || !strings.EqualFold(req.Scheme, "basic") {
+			return mygo.AuthResponse{}
+		}
+		attempts++
+		if attempts > 2 {
+			if !warned {
+				warned = true
+				fmt.Fprintln(os.Stderr, "ghostfish: 凭据被服务器拒了，已停止重试；用户名或密码大概率不对")
+			}
+			return mygo.AuthResponse{}
+		}
+		return *cred
+	}
 }
