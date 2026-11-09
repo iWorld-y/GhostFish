@@ -1,10 +1,14 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo"
 )
@@ -55,7 +59,7 @@ func TestProbeAuth(t *testing.T) {
 				w.WriteHeader(tt.status)
 			}))
 			defer srv.Close()
-			got := probeAuth(srv.URL)
+			got := probeAuth(context.Background(), srv.URL)
 			if tt.wantNil {
 				if got != nil {
 					t.Fatalf("probeAuth = %+v, want nil", got)
@@ -82,7 +86,7 @@ func TestProbeAuthSkipsURLWithCredential(t *testing.T) {
 	}))
 	defer srv.Close()
 	withCred := strings.Replace(srv.URL, "http://", "http://user:pass@", 1)
-	if got := probeAuth(withCred); got != nil {
+	if got := probeAuth(context.Background(), withCred); got != nil {
 		t.Fatalf("probeAuth = %+v, want nil for a URL with credentials", got)
 	}
 }
@@ -95,7 +99,7 @@ func TestProbeUsesGET(t *testing.T) {
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	defer srv.Close()
-	if got := probeAuth(srv.URL); got == nil {
+	if got := probeAuth(context.Background(), srv.URL); got == nil {
 		t.Fatalf("probeAuth = nil, methods seen: %v", methods)
 	}
 	if len(methods) != 1 || methods[0] != http.MethodGet {
@@ -115,11 +119,11 @@ func TestVerifyCredential(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ok, status, err := verifyCredential(srv.URL, &mygo.AuthResponse{Username: "user", Password: "pass"})
+	ok, status, err := verifyCredential(context.Background(), srv.URL, &mygo.AuthResponse{Username: "user", Password: "pass"})
 	if err != nil || !ok || status != http.StatusOK {
 		t.Fatalf("verifyCredential(right) = (%v, %d, %v), want (true, 200, nil)", ok, status, err)
 	}
-	ok, status, err = verifyCredential(srv.URL, &mygo.AuthResponse{Username: "user", Password: "wrong"})
+	ok, status, err = verifyCredential(context.Background(), srv.URL, &mygo.AuthResponse{Username: "user", Password: "wrong"})
 	if err != nil || ok || status != http.StatusUnauthorized {
 		t.Fatalf("verifyCredential(wrong) = (%v, %d, %v), want (false, 401, nil)", ok, status, err)
 	}
@@ -165,5 +169,152 @@ func TestAuthHandler(t *testing.T) {
 				t.Fatalf("handle(%+v) = %+v, want %+v", req.request, got, req.want)
 			}
 		})
+	}
+}
+
+func TestPrepareAuthEmpty(t *testing.T) {
+	host, credential := prepareAuth(context.Background(), "")
+	if host != "" || credential != nil {
+		t.Fatalf("prepareAuth empty = %q, %+v; want no host or credential", host, credential)
+	}
+}
+
+func TestPrepareAuthForAddress(t *testing.T) {
+	t.Setenv(authEnv, "user:wrong")
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.Header().Set("WWW-Authenticate", `Basic realm="test"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	host, credential := prepareAuth(context.Background(), srv.URL)
+	if host != "127.0.0.1" || credential == nil || credential.Username != "user" || credential.Password != "wrong" {
+		t.Fatalf("prepareAuth = %q, %+v; want target host and environment credential", host, credential)
+	}
+	if got := requests.Load(); got != 2 {
+		t.Fatalf("requests = %d; want one probe and one credential validation", got)
+	}
+}
+
+func TestIndependentAuthHandlers(t *testing.T) {
+	first := authHandler("first.example", &mygo.AuthResponse{Username: "first", Password: "one"})
+	second := authHandler("second.example", &mygo.AuthResponse{Username: "second", Password: "two"})
+	firstRequest := mygo.AuthRequest{Host: "first.example", Scheme: "basic"}
+	secondRequest := mygo.AuthRequest{Host: "second.example", Scheme: "basic"}
+	if got := first(secondRequest); got.Username != "" {
+		t.Fatal("first host credentials were offered to a different host")
+	}
+	first(firstRequest)
+	first(firstRequest)
+	if got := first(firstRequest); got.Username != "" {
+		t.Fatal("first host should stop after two attempts")
+	}
+	if got := second(secondRequest); got.Username != "second" {
+		t.Fatal("first host attempts should not consume another host's retries")
+	}
+}
+
+func TestSerialPrompt(t *testing.T) {
+	var running atomic.Int32
+	var overlap atomic.Bool
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			serialPrompt(context.Background(), func() *mygo.AuthResponse {
+				if running.Add(1) != 1 {
+					overlap.Store(true)
+				}
+				time.Sleep(5 * time.Millisecond)
+				running.Add(-1)
+				return nil
+			})
+		}()
+	}
+	close(start)
+	wg.Wait()
+	if overlap.Load() {
+		t.Fatal("terminal prompts overlapped")
+	}
+}
+
+func TestCanceledPromptDoesNotStartAfterWaiting(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	firstDone := make(chan struct{})
+	go func() {
+		defer close(firstDone)
+		serialPrompt(context.Background(), func() *mygo.AuthResponse {
+			close(entered)
+			<-release
+			return nil
+		})
+	}()
+	<-entered
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan struct{})
+	result := make(chan *mygo.AuthResponse, 1)
+	var prompted atomic.Bool
+	go func() {
+		close(started)
+		result <- serialPrompt(ctx, func() *mygo.AuthResponse {
+			prompted.Store(true)
+			return &mygo.AuthResponse{Username: "unexpected"}
+		})
+	}()
+	<-started
+	cancel()
+	close(release)
+	<-firstDone
+	if got := <-result; got != nil || prompted.Load() {
+		t.Fatal("a canceled request must not start a queued terminal prompt")
+	}
+}
+
+func TestCanceledPromptDiscardsCompletedRead(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	entered, release := make(chan struct{}), make(chan struct{})
+	result := make(chan *mygo.AuthResponse, 1)
+	go func() {
+		result <- serialPrompt(ctx, func() *mygo.AuthResponse {
+			close(entered)
+			<-release
+			return &mygo.AuthResponse{Username: "stale"}
+		})
+	}()
+	<-entered
+	cancel()
+	close(release)
+	if got := <-result; got != nil {
+		t.Fatal("credentials from a canceled prompt must be discarded")
+	}
+}
+
+func TestCanceledProbeReturnsWithoutCredential(t *testing.T) {
+	entered := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(entered)
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan *mygo.AuthResponse, 1)
+	go func() {
+		_, cred := prepareAuth(ctx, srv.URL)
+		result <- cred
+	}()
+	<-entered
+	cancel()
+	select {
+	case cred := <-result:
+		if cred != nil {
+			t.Fatal("canceled probe returned credentials")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("canceled probe did not return")
 	}
 }

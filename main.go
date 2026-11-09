@@ -1,14 +1,17 @@
 // Command ghostfish 是摸鱼用的浮动浏览器：一个可调不透明度、可穿透鼠标的窗口，
-// 只在终端启动，控制全部走全局快捷键。
+// 只在终端启动，窗口状态由全局快捷键控制。
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"time"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/ui"
 )
 
 const (
@@ -22,12 +25,15 @@ const (
 
 // app 持有窗口和这一份运行期状态。所有回调都在主线程执行。
 type app struct {
-	target    string
-	win       *mygo.Window
-	st        state
-	statePath string
-	// authHost 是拿到凭据的主机，只有它自己的质询才用这份凭据。
-	authHost string
+	target          string
+	win             *mygo.Window
+	st              state
+	statePath       string
+	tabs            tabSet
+	focusAddress    bool
+	revealActiveTab bool
+	pollTimer       *time.Timer
+	pollGeneration  uint64
 }
 
 // version 由发布构建注入：go build -ldflags "-X main.version=v0.1.0"。
@@ -43,7 +49,7 @@ func main() {
 	target, err := targetURL(os.Args[1:])
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ghostfish: %v\n", err)
-		fmt.Fprintln(os.Stderr, "用法：ghostfish <网址>")
+		fmt.Fprintln(os.Stderr, "用法：ghostfish [网址]")
 		fmt.Fprintln(os.Stderr, "      ghostfish -version")
 		fmt.Fprintln(os.Stderr, "例：ghostfish https://example.com")
 		os.Exit(2)
@@ -68,11 +74,8 @@ func (a *app) start() {
 	a.statePath = stateFilePath()
 	a.st = loadState(a.statePath)
 
-	// 认证要在开窗口之前谈好：窗口一出来就撞 401 的话，用户看到的是报错页。
-	cred := a.prepareAuth()
-
-	// 先建一个不显示的窗口：认证处理器必须在第一次请求之前就位，
-	// 否则质询会先落到 webview 的默认处理上。
+	// 启动网址仍在窗口显示前准备认证；空白启动不会发起请求。
+	authHost, cred := prepareAuth(context.Background(), a.target)
 	a.win = mygo.NewWindow(mygo.WindowOptions{
 		Title:           appName,
 		Hidden:          true,
@@ -82,15 +85,36 @@ func (a *app) start() {
 		AlwaysOnTop:     true,
 		Opacity:         a.st.Opacity,
 		BackgroundColor: background,
+		TitleBarStyle:   mygo.TitleBarHidden,
+		Content:         ui.View(a.view),
 	})
 
-	if cred != nil {
-		a.win.Page().SetAuthHandler(authHandler(a.authHost, cred))
+	tab, err := a.createTab()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ghostfish: 创建标签页失败：%v\n", err)
+		a.win.Close()
+		return
 	}
-
+	if a.target != "" {
+		a.focusAddress = false
+		tab.startPageLoad(a.target, true)
+		if cred != nil {
+			tab.view.Page().SetAuthHandler(authHandler(authHost, cred))
+		}
+		if err := tab.view.Page().LoadURL(a.target); err != nil {
+			tab.failPageLoad(tab.view, fmt.Sprintf("载入网址失败：%v", err))
+			fmt.Fprintf(os.Stderr, "ghostfish: 载入网址失败：%v\n", err)
+		}
+	}
+	a.win.OnShow(a.startAddressPolling)
+	a.win.OnHide(a.stopAddressPolling)
+	a.win.OnClosed(a.stopAddressPolling)
 	a.win.Show()
-	if err := a.win.Page().LoadURL(a.target); err != nil {
-		fmt.Fprintf(os.Stderr, "ghostfish: 载入 %s 失败：%v\n", a.target, err)
+	if tab.showsAddress() {
+		mygo.App.Focus()
+		a.win.Focus()
+		a.focusAddress = true
+		a.win.Invalidate()
 	}
 
 	var forced bool

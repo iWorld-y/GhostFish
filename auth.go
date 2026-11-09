@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -33,14 +35,14 @@ type authNeed struct {
 
 // probe 用 GET 请求一次网址，和浏览器做的事情一致。
 // 不跟随跳转，否则 401 会被跳转掩盖。
-func probe(rawURL string, cred *mygo.AuthResponse) (*http.Response, error) {
+func probe(ctx context.Context, rawURL string, cred *mygo.AuthResponse) (*http.Response, error) {
 	client := &http.Client{
 		Timeout: probeTimeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
 	}
-	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -61,12 +63,12 @@ func drain(resp *http.Response) {
 
 // probeAuth 先自己看一次目标站点，是否需要 HTTP Basic 认证。
 // 不需要、拿不准、或网址里已经带凭据时返回 nil，把决定交给 webview。
-func probeAuth(rawURL string) *authNeed {
+func probeAuth(ctx context.Context, rawURL string) *authNeed {
 	u, err := url.Parse(rawURL)
 	if err != nil || u.User != nil {
 		return nil
 	}
-	resp, err := probe(rawURL, nil)
+	resp, err := probe(ctx, rawURL, nil)
 	if err != nil {
 		return nil
 	}
@@ -113,8 +115,8 @@ func parseChallenge(header string) (scheme, realm string) {
 
 // verifyCredential 拿凭据真请求一次，返回是否通过和看到的状态码，
 // 状态码用来在失败时告诉用户服务器回了什么。
-func verifyCredential(rawURL string, cred *mygo.AuthResponse) (bool, int, error) {
-	resp, err := probe(rawURL, cred)
+func verifyCredential(ctx context.Context, rawURL string, cred *mygo.AuthResponse) (bool, int, error) {
+	resp, err := probe(ctx, rawURL, cred)
 	if err != nil {
 		return false, 0, err
 	}
@@ -123,16 +125,22 @@ func verifyCredential(rawURL string, cred *mygo.AuthResponse) (bool, int, error)
 }
 
 // resolveCredential 依次尝试环境变量、系统钥匙串、终端输入。
-func resolveCredential(need *authNeed) *mygo.AuthResponse {
+func resolveCredential(ctx context.Context, need *authNeed) *mygo.AuthResponse {
+	if ctx.Err() != nil {
+		return nil
+	}
 	if c := credentialFromEnv(); c != nil {
 		fmt.Fprintln(os.Stderr, "ghostfish: 用环境变量里的凭据")
 		return c
+	}
+	if ctx.Err() != nil {
+		return nil
 	}
 	if c := credentialFromKeychain(need.Host); c != nil {
 		fmt.Fprintf(os.Stderr, "ghostfish: 用钥匙串里 %s 的凭据\n", need.Host)
 		return c
 	}
-	return promptCredential(need)
+	return promptCredential(ctx, need)
 }
 
 func credentialFromEnv() *mygo.AuthResponse {
@@ -169,62 +177,87 @@ func saveCredential(host string, cred *mygo.AuthResponse) error {
 	return mygo.Secrets.Set(secretKey(host), raw)
 }
 
+// promptMu 防止多个标签页同时向同一终端读取凭据。
+var promptMu sync.Mutex
+
+// serialPrompt 按顺序执行终端输入，避免不同站点的提示交错。
+func serialPrompt(ctx context.Context, read func() *mygo.AuthResponse) *mygo.AuthResponse {
+	promptMu.Lock()
+	defer promptMu.Unlock()
+	if ctx.Err() != nil {
+		return nil
+	}
+	cred := read()
+	if ctx.Err() != nil {
+		return nil
+	}
+	return cred
+}
+
 // promptCredential 在终端里问用户名和密码，密码不回显。
-func promptCredential(need *authNeed) *mygo.AuthResponse {
+func promptCredential(ctx context.Context, need *authNeed) *mygo.AuthResponse {
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
 		return nil
 	}
-	fmt.Fprintf(os.Stderr, "%s（realm %q）需要登录\n用户名：", need.Host, need.Realm)
-	reader := bufio.NewReader(os.Stdin)
-	line, err := reader.ReadString('\n')
-	if err != nil && line == "" {
-		return nil
-	}
-	user := strings.TrimSpace(line)
-	if user == "" {
-		return nil
-	}
-	fmt.Fprint(os.Stderr, "密码（不回显）：")
-	pass, err := term.ReadPassword(int(os.Stdin.Fd()))
-	fmt.Fprintln(os.Stderr)
-	if err != nil {
-		return nil
-	}
-	return &mygo.AuthResponse{Username: user, Password: string(pass)}
+	return serialPrompt(ctx, func() *mygo.AuthResponse {
+		fmt.Fprintf(os.Stderr, "%s（realm %q）需要登录\n用户名：", need.Host, need.Realm)
+		reader := bufio.NewReader(os.Stdin)
+		line, err := reader.ReadString('\n')
+		if err != nil && line == "" {
+			return nil
+		}
+		user := strings.TrimSpace(line)
+		if user == "" || ctx.Err() != nil {
+			return nil
+		}
+		fmt.Fprint(os.Stderr, "密码（不回显）：")
+		pass, err := term.ReadPassword(int(os.Stdin.Fd()))
+		fmt.Fprintln(os.Stderr)
+		if err != nil {
+			return nil
+		}
+		return &mygo.AuthResponse{Username: user, Password: string(pass)}
+	})
 }
 
-// prepareAuth 在开窗口之前把认证准备好，避免窗口出来后卡在 401。
-func (a *app) prepareAuth() *mygo.AuthResponse {
-	need := probeAuth(a.target)
+// prepareAuth 为一个显式网址准备凭据；空网址不进行探测。
+func prepareAuth(ctx context.Context, rawURL string) (string, *mygo.AuthResponse) {
+	if rawURL == "" || ctx.Err() != nil {
+		return "", nil
+	}
+	need := probeAuth(ctx, rawURL)
 	if need == nil {
-		return nil
+		return "", nil
 	}
 	fmt.Fprintf(os.Stderr, "ghostfish: %s 要求认证（realm %q）\n", need.Host, need.Realm)
-	cred := resolveCredential(need)
+	cred := resolveCredential(ctx, need)
+	if ctx.Err() != nil {
+		return "", nil
+	}
 	if cred == nil {
 		fmt.Fprintln(os.Stderr, "ghostfish: 没拿到凭据，交给 webview 自己处理")
-		return nil
+		return "", nil
 	}
-	// 校验只是尽力而为：有些服务器对带凭据的探测请求另有脾气，
-	// 校验失败也把凭据交给窗口，让真正的页面加载去试。
-	ok, status, err := verifyCredential(a.target, cred)
+	// 校验失败也交给网页尝试；探测请求与真实加载可能有差异。
+	ok, status, err := verifyCredential(ctx, rawURL, cred)
+	if ctx.Err() != nil {
+		return "", nil
+	}
 	if !ok {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "ghostfish: 凭据校验请求失败（%v），仍然交给窗口试\n", err)
 		} else {
 			fmt.Fprintf(os.Stderr, "ghostfish: 凭据校验返回 %d，仍然交给窗口试\n", status)
 		}
-		fmt.Fprintf(os.Stderr, "ghostfish: 如果页面仍是 401，多半是用户名或密码不对\n")
-		a.authHost = need.Host
-		return cred
+		fmt.Fprintln(os.Stderr, "ghostfish: 如果页面仍是 401，多半是用户名或密码不对")
+		return need.Host, cred
 	}
 	if err := saveCredential(need.Host, cred); err != nil {
 		fmt.Fprintf(os.Stderr, "ghostfish: 存进钥匙串失败（下次还要再输）：%v\n", err)
 	} else {
-		fmt.Fprintf(os.Stderr, "ghostfish: 凭据已存进钥匙串，下次不用再输\n")
+		fmt.Fprintln(os.Stderr, "ghostfish: 凭据已存进钥匙串，下次不用再输")
 	}
-	a.authHost = need.Host
-	return cred
+	return need.Host, cred
 }
 
 // authHandler 只向目标主机的 Basic 认证提供凭据，并在两次尝试后停止。

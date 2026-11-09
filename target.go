@@ -4,20 +4,43 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
-// targetURL 从启动参数里取目标网址：必须给一个参数，多给的忽略；
-// 没写协议时补 https，非 http/https 或解析不成的一律报错。
+// targetURL 返回启动网址；没有参数时返回空网址，多余参数被忽略。
 func targetURL(args []string) (string, error) {
 	if len(args) == 0 {
-		return "", errors.New("缺少目标网址")
+		return "", nil
 	}
-	raw := strings.TrimSpace(args[0])
+	return parseURL(args[0])
+}
+
+// parseURL 校验 HTTP 网址，并为缺少协议的网址补全 HTTPS。
+func parseURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return "", errors.New("目标网址为空")
 	}
-	if !strings.Contains(raw, "://") {
+	schemeEnd := strings.Index(raw, "://")
+	if schemeEnd < 0 || schemeEnd > strings.IndexAny(raw, "/?#") {
+		// 主机名加数字端口不是协议；其他带冒号的输入不能当成网址凭据。
+		if parsed, err := url.Parse(raw); err == nil && parsed.Scheme != "" {
+			scheme := strings.ToLower(parsed.Scheme)
+			port := raw[len(parsed.Scheme)+1:]
+			if end := strings.IndexAny(port, "/?#"); end >= 0 {
+				port = port[:end]
+			}
+			_, portErr := strconv.ParseUint(port, 10, 16)
+			switch scheme {
+			case "http", "https", "mailto", "tel", "data", "javascript", "file", "ftp", "ws", "wss":
+				return "", fmt.Errorf("只支持 http 与 https，收到 %q", scheme)
+			default:
+				if portErr != nil {
+					return "", fmt.Errorf("只支持 http 与 https，收到 %q", scheme)
+				}
+			}
+		}
 		raw = "https://" + raw
 	}
 	u, err := url.Parse(raw)

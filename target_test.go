@@ -33,7 +33,6 @@ func TestTargetURLErrors(t *testing.T) {
 		name string
 		args []string
 	}{
-		{"没有参数", nil},
 		{"空参数", []string{""}},
 		{"只有空格", []string{"   "}},
 		{"不支持的协议", []string{"ftp://example.com"}},
@@ -46,5 +45,53 @@ func TestTargetURLErrors(t *testing.T) {
 				t.Fatalf("targetURL(%q) = %q, want error", tt.args, got)
 			}
 		})
+	}
+}
+
+func TestTargetURLOmitted(t *testing.T) {
+	got, err := targetURL(nil)
+	if err != nil || got != "" {
+		t.Fatalf("targetURL(nil) = %q, %v; want empty target without error", got, err)
+	}
+}
+
+func TestParseURL(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"example.com/docs", "https://example.com/docs"},
+		{"http://localhost:8080", "http://localhost:8080"},
+		{"https://example.com", "https://example.com"},
+		{"example.com/login?next=https://other.example/path", "https://example.com/login?next=https://other.example/path"},
+		{"example.com/path/https://other.example", "https://example.com/path/https://other.example"},
+	}
+	for _, tt := range tests {
+		got, err := parseURL(tt.input)
+		if err != nil || got != tt.want {
+			t.Errorf("parseURL(%q) = %q, %v; want %q", tt.input, got, err, tt.want)
+		}
+	}
+	for _, input := range []string{"", " ", "ftp://example.com", "https://"} {
+		if got, err := parseURL(input); err == nil {
+			t.Errorf("parseURL(%q) = %q; want error", input, got)
+		}
+	}
+}
+
+func TestParseURLSchemesAndPorts(t *testing.T) {
+	for _, input := range []string{"mailto:user@example.com", "javascript:alert(1)", "data:text/plain,hello", "tel:123"} {
+		if got, err := parseURL(input); err == nil {
+			t.Errorf("parseURL(%q) = %q; want unsupported scheme error", input, got)
+		}
+	}
+	for _, tt := range []struct{ input, want string }{
+		{"localhost:8080", "https://localhost:8080"},
+		{"example.com:8443/path", "https://example.com:8443/path"},
+	} {
+		got, err := parseURL(tt.input)
+		if err != nil || got != tt.want {
+			t.Errorf("parseURL(%q) = %q, %v; want %q", tt.input, got, err, tt.want)
+		}
 	}
 }
