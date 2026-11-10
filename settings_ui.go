@@ -82,6 +82,13 @@ func (a *app) settingsDialog(c *ui.Context) {
 						})
 						ui.Divider(c)
 					}
+					ui.Text(c, "窗口拖动修饰键").Bold()
+					ui.Column(c).FillWidth().Gap(4).Children(func() {
+						ui.Checkbox(c, &a.settingsDraft.DragModifiers.Command, "Command").Label("拖动修饰键 Command")
+						ui.Checkbox(c, &a.settingsDraft.DragModifiers.Control, "Control").Label("拖动修饰键 Control")
+						ui.Checkbox(c, &a.settingsDraft.DragModifiers.Option, "Option").Label("拖动修饰键 Option")
+						ui.Checkbox(c, &a.settingsDraft.DragModifiers.Shift, "Shift").Label("拖动修饰键 Shift")
+					})
 					if a.restoreError != "" {
 						ui.Text(c, a.restoreError).Wrap().TextColor(c.Theme().Danger)
 					}

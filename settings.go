@@ -15,11 +15,30 @@ type shortcutBinding struct {
 	Shift   bool   `json:"shift"`
 }
 
+// dragModifiers 是移动窗口所需的修饰键组合。
+type dragModifiers struct {
+	Command bool `json:"command"`
+	Control bool `json:"control"`
+	Option  bool `json:"option"`
+	Shift   bool `json:"shift"`
+}
+
+// valid 判断是否至少选择了一个修饰键。
+func (m dragModifiers) valid() bool {
+	return m.Command || m.Control || m.Option || m.Shift
+}
+
+// matches 判断当前修饰键是否与非空的拖动组合完全一致。
+func (m dragModifiers) matches(held dragModifiers) bool {
+	return m.valid() && m == held
+}
+
 // settings 保存不透明度范围和按动作顺序排列的快捷键。
 type settings struct {
-	MinOpacity int                `json:"min_opacity"`
-	MaxOpacity int                `json:"max_opacity"`
-	Shortcuts  [4]shortcutBinding `json:"shortcuts"`
+	MinOpacity    int                `json:"min_opacity"`
+	MaxOpacity    int                `json:"max_opacity"`
+	Shortcuts     [4]shortcutBinding `json:"shortcuts"`
+	DragModifiers dragModifiers      `json:"drag_modifiers"`
 }
 
 const (
@@ -40,8 +59,9 @@ const (
 
 func defaultSettings() settings {
 	return settings{
-		MinOpacity: settingsMinOpacity,
-		MaxOpacity: settingsMaxOpacity,
+		MinOpacity:    settingsMinOpacity,
+		MaxOpacity:    settingsMaxOpacity,
+		DragModifiers: dragModifiers{Command: true},
 		Shortcuts: [4]shortcutBinding{
 			{Key: "-", Command: true, Shift: true},
 			{Key: "=", Command: true, Shift: true},
@@ -69,6 +89,9 @@ func validShortcutKey(key string) bool {
 func validateSettings(s settings) error {
 	if s.MinOpacity < settingsMinOpacity || s.MaxOpacity > settingsMaxOpacity || s.MinOpacity > s.MaxOpacity {
 		return fmt.Errorf("请输入 0%% 至 100%% 的整数，且下限不能大于上限")
+	}
+	if !s.DragModifiers.valid() {
+		return fmt.Errorf("窗口拖动：请至少选择一个修饰键")
 	}
 	seen := make(map[shortcutBinding]bool, len(s.Shortcuts))
 	for i, key := range s.Shortcuts {

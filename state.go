@@ -125,7 +125,43 @@ func decodeSettings(data json.RawMessage) (settings, bool) {
 			config.Shortcuts = shortcuts
 		}
 	}
+	if raw, ok := fields["drag_modifiers"]; ok {
+		drag, valid := decodeDragModifiers(raw)
+		if !valid {
+			invalid = true
+		} else {
+			config.DragModifiers = drag
+		}
+	}
 	return config, invalid
+}
+
+// decodeDragModifiers 校验每个已保存的修饰键，并拒绝未知键与 null。
+func decodeDragModifiers(data json.RawMessage) (dragModifiers, bool) {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(data, &fields) != nil || fields == nil {
+		return dragModifiers{}, false
+	}
+	var result dragModifiers
+	for name, raw := range fields {
+		var value *bool
+		if json.Unmarshal(raw, &value) != nil || value == nil {
+			return dragModifiers{}, false
+		}
+		switch name {
+		case "command":
+			result.Command = *value
+		case "control":
+			result.Control = *value
+		case "option":
+			result.Option = *value
+		case "shift":
+			result.Shift = *value
+		default:
+			return dragModifiers{}, false
+		}
+	}
+	return result, result.valid()
 }
 
 // saveState 先写临时文件再改名，避免写一半留下坏文件。

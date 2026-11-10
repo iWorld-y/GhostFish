@@ -170,6 +170,9 @@ func (a *app) start() {
 		a.save()
 	}
 	a.setIgnoreMouse(a.st.ClickThrough)
+	if err := a.installWindowDrag(); err != nil {
+		fmt.Fprintf(os.Stderr, "ghostfish: 窗口拖动快捷键不可用：%v\n", err)
+	}
 
 	reportState(a.st)
 }
