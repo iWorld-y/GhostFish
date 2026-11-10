@@ -81,3 +81,45 @@ func TestRepeatingShortcutIgnoresPreviousPress(t *testing.T) {
 		t.Fatalf("current press: calls = %d, scheduled = %d", calls, len(scheduled))
 	}
 }
+
+func TestConfiguredShortcutFlagsAndKeys(t *testing.T) {
+	for _, key := range inputKeyNames {
+		if _, ok := macKeyCodes[key]; !ok {
+			t.Fatalf("missing key %s", key)
+		}
+	}
+	binding := shortcutBinding{Command: true, Control: true, Alt: true, Shift: true}
+	if got := binding.macFlags(); got != shortcutFlags {
+		t.Fatalf("flags = %#x", got)
+	}
+}
+
+func TestRepeatingShortcutCancelled(t *testing.T) {
+	var calls int
+	var scheduled []func()
+	s := repeatingShortcut{held: func() bool { return true }, action: func() { calls++ }, after: func(_ time.Duration, fn func()) { scheduled = append(scheduled, fn) }}
+	s.press()
+	s.generation++
+	scheduled[0]()
+	if calls != 1 {
+		t.Fatalf("calls = %d", calls)
+	}
+}
+
+// 换键或注销会调用 stop：已排队的重复任务不能再动窗口，之后重新按键仍能工作。
+func TestRepeatingShortcutStopEndsOldRepeat(t *testing.T) {
+	var calls int
+	var scheduled []func()
+	s := repeatingShortcut{held: func() bool { return true }, action: func() { calls++ }, after: func(_ time.Duration, fn func()) { scheduled = append(scheduled, fn) }}
+	s.press()
+	s.stop()
+	scheduled[0]()
+	if calls != 1 || len(scheduled) != 1 {
+		t.Fatalf("stopped shortcut kept repeating: calls = %d, scheduled = %d", calls, len(scheduled))
+	}
+	s.press()
+	scheduled[1]()
+	if calls != 3 {
+		t.Fatalf("shortcut should work again after stop: calls = %d", calls)
+	}
+}

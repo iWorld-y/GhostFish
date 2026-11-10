@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -20,10 +21,17 @@ func (a *app) view(c *ui.Context) {
 		}
 		ui.WebView(c, tab.view).Grow(1)
 	})
+	if runtime.GOOS == "darwin" {
+		a.settingsDialog(c)
+	}
 }
 
 // tabBar 为平台窗口按钮留出空间，并绘制可滚动的标签页。
 func (a *app) tabBar(c *ui.Context) {
+	if runtime.GOOS == "darwin" {
+		a.macTabBar(c)
+		return
+	}
 	bar := c.TitleBar()
 	barHeight := max(bar.Height, 36)
 	theme := c.Theme()

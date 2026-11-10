@@ -48,6 +48,24 @@ func (a *app) registerHotkeys() int {
 	return registered
 }
 
+// guardRecovery 按各动作自己的注册结果保护窗口：穿透快捷键不可用时不能带着穿透启动，
+// 隐藏快捷键不可用时窗口必须留在可见状态，其他快捷键是否成功不能代替这两项检查。
+// 返回调整后的状态和需要写到终端的说明。
+func guardRecovery(registered [4]bool, st state) (state, []string) {
+	var notes []string
+	if st.ClickThrough && !registered[shortcutThrough] {
+		st.ClickThrough = false
+		notes = append(notes, "穿透快捷键不可用，已以不穿透状态启动")
+	}
+	switch {
+	case !registered[shortcutThrough] && !registered[shortcutHidden]:
+		notes = append(notes, "警告：切换穿透和隐藏的快捷键都不可用，窗口保持可见、不穿透")
+	case !registered[shortcutHidden]:
+		notes = append(notes, "隐藏快捷键不可用，窗口保持可见")
+	}
+	return st, notes
+}
+
 // resolveStartState 决定启动时真正生效的状态：没有任何快捷键可用时，
 // 用户无法自己退出穿透，所以不允许带着穿透状态启动。
 func resolveStartState(registered int, st state) (state, bool) {

@@ -50,7 +50,7 @@ func TestLoadStateFallsBack(t *testing.T) {
 		{"文件不存在", "", state{Opacity: defaultOpacity}},
 		{"JSON 损坏", "{not json", state{Opacity: defaultOpacity}},
 		{"字段缺失", "{}", state{Opacity: defaultOpacity}},
-		{"不透明度过低", `{"opacity":0.01}`, state{Opacity: defaultOpacity}},
+		{"不透明度过低", `{"opacity":-0.5}`, state{Opacity: defaultOpacity}},
 		{"不透明度过高", `{"opacity":3}`, state{Opacity: defaultOpacity}},
 		{"穿透字段类型错误", `{"opacity":0.6,"click_through":"yes"}`, state{Opacity: defaultOpacity}},
 		{"正常值", `{"opacity":0.6,"click_through":true}`, state{Opacity: 0.6, ClickThrough: true}},

@@ -34,6 +34,28 @@ type app struct {
 	revealActiveTab bool
 	pollTimer       *time.Timer
 	pollGeneration  uint64
+	keys            *shortcutManager
+	settingsOpen    bool
+	// settingsModalOpen 由 ui.Modal 直接改写（Escape 或点击背板关闭），
+	// 关闭后还要把窗口状态一起收尾，所以和 settingsOpen 分开记。
+	settingsModalOpen bool
+	settingsDraft     settings
+	settingsMin       string
+	settingsMax       string
+	settingsError     string
+	// restoreError 记录快捷键恢复失败，保留到用户重新保存或恢复成功为止，
+	// 不被下一次录入清空；recoveryLost 只标记穿透或隐藏入口真的丢了，
+	// 用来决定是否强制窗口可见、不穿透。
+	restoreError   string
+	recoveryLost   bool
+	settingsFocus  bool
+	recording      int
+	recordingFocus bool
+	suspendedKeys  [4]bool
+	// 以下三项记录最后一次告诉窗口的状态，测试没有真实窗口时据此断言。
+	ignoringMouse bool
+	visible       bool
+	opacity       float64
 }
 
 // version 由发布构建注入：go build -ldflags "-X main.version=v0.1.0"。
@@ -109,7 +131,10 @@ func (a *app) start() {
 	a.win.OnShow(a.startAddressPolling)
 	a.win.OnHide(a.stopAddressPolling)
 	a.win.OnClosed(a.stopAddressPolling)
-	a.win.Show()
+	// MyGo 把 WindowOptions 里的 0 当成未设置、换成 1，所以保存的 0% 要显示前
+	// 单独用 SetOpacity 应用一次。
+	a.setOpacity(a.st.Opacity)
+	a.showWindow()
 	if tab.showsAddress() {
 		mygo.App.Focus()
 		a.win.Focus()
@@ -118,41 +143,76 @@ func (a *app) start() {
 	}
 
 	var forced bool
-	a.st, forced = resolveStartState(a.registerHotkeys(), a.st)
+	if runtime.GOOS == "darwin" {
+		if a.st.Settings == nil {
+			defaults := defaultSettings()
+			a.st.Settings = &defaults
+		}
+		a.keys = &shortcutManager{register: registerConfiguredShortcut}
+		a.keys.actions = [4]func(){func() { a.changeOpacity(-opacityStep) }, func() { a.changeOpacity(opacityStep) }, a.toggleClickThrough, a.toggleHidden}
+		for _, failure := range a.keys.start(a.st.Settings.Shortcuts) {
+			fmt.Fprintf(os.Stderr, "ghostfish: 快捷键注册失败：%s\n", failure)
+		}
+		started := a.st.ClickThrough
+		var notes []string
+		a.st, notes = guardRecovery(a.keys.registered, a.st)
+		forced = a.st.ClickThrough != started
+		for _, note := range notes {
+			fmt.Fprintf(os.Stderr, "ghostfish: %s\n", note)
+		}
+	} else {
+		a.st, forced = resolveStartState(a.registerHotkeys(), a.st)
+		if forced {
+			fmt.Fprintln(os.Stderr, "ghostfish: 穿透恢复快捷键不可用，已强制以不穿透状态启动")
+		}
+	}
 	if forced {
-		fmt.Fprintln(os.Stderr, "ghostfish: 所有快捷键都注册失败，已强制以不穿透状态启动")
 		a.save()
 	}
-	a.win.SetIgnoreMouseEvents(a.st.ClickThrough)
+	a.setIgnoreMouse(a.st.ClickThrough)
 
 	reportState(a.st)
 }
 
 func (a *app) changeOpacity(delta float64) {
-	next := clampOpacity(round2(a.st.Opacity + delta))
+	next := round2(a.st.Opacity + delta)
+	if a.st.Settings != nil {
+		next = a.st.Settings.clampOpacity(next)
+	} else {
+		next = clampOpacity(next)
+	}
 	if next == a.st.Opacity {
 		return
 	}
 	a.st.Opacity = next
-	a.win.SetOpacity(next)
+	a.setOpacity(next)
 	a.save()
 	reportState(a.st)
 }
 
 func (a *app) toggleClickThrough() {
+	if !a.canClickThrough() {
+		if !a.st.ClickThrough {
+			fmt.Fprintln(os.Stderr, "ghostfish: 快捷键没能恢复，先在设置里换一个可用的组合再开启穿透")
+		}
+		return
+	}
 	a.st.ClickThrough = !a.st.ClickThrough
-	a.win.SetIgnoreMouseEvents(a.st.ClickThrough)
+	a.applyClickThrough()
 	a.save()
 	reportState(a.st)
 }
 
 func (a *app) toggleHidden() {
-	if a.win.IsVisible() {
-		a.win.Hide()
+	if a.keys != nil && !a.keys.registered[shortcutHidden] {
+		return
+	}
+	if a.windowShown() {
+		a.hideWindow()
 		fmt.Fprintln(os.Stderr, "ghostfish: 窗口已隐藏，按同一个快捷键恢复")
 		return
 	}
-	a.win.Show()
+	a.showWindow()
 	fmt.Fprintln(os.Stderr, "ghostfish: 窗口已恢复")
 }
 
