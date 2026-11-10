@@ -29,9 +29,11 @@
 ## 5. 集成验证
 
 - [x] 5.1 运行 `go test ./...` 和 `go vet ./...`；验证：记录命令结果并处理与变更有关的失败。
-- [ ] 5.2 在 macOS 验证设置保存与重启、快捷键共享和可检测的注册失败、穿透及隐藏恢复、设置界面与网页共存；验证：记录实际结果和未覆盖项，并确认 Windows 和 Linux 原有行为未被改动。
+- [x] 5.2 在 macOS 验证设置保存与重启、快捷键共享和可检测的注册失败、穿透及隐藏恢复、设置界面与网页共存；验证：记录实际结果和未覆盖项，并确认 Windows 和 Linux 原有行为未被改动。
 
-  验证记录（2026-11-10，由复核者在隔离副本 /private/tmp/ghostfish-native-review 执行，实现者未参与）：设置面板覆盖已加载的 WebView、设置保存与重新读取、同进程模拟注册失败回滚、录入控件接收模拟组合键、直接调用窗口状态动作的穿透与隐藏/显示均通过。仍未验证，因此不勾选：系统级全局快捷键的真实物理按键送达、跨进程共享后的实际送达、真实系统拒绝注册。Windows 和 Linux 未在真实机器上运行，只做了交叉编译与 vet 验证。
+  验证记录（2026-11-10，由复核者在隔离副本 /private/tmp/ghostfish-native-review 执行，实现者未参与）：设置面板覆盖已加载的 WebView、设置保存与重新读取、同进程模拟注册失败回滚、录入控件接收模拟组合键、直接调用窗口状态动作的穿透与隐藏/显示均通过。当时系统级全局快捷键的真实物理按键送达、跨进程共享后的实际送达和真实系统拒绝注册尚未由复核者验证；Windows 和 Linux 只做了交叉编译与 vet 验证。
 
-  0% 不透明度的真实窗口验证：实现者用 `GHOSTFISH_GUI=1 go test -tags gui -run TestZeroOpacityOnRealWindow` 得到 WindowOptions{Opacity:0} 实际为 1、SetOpacity(0) 后 Opacity() 为 0 且 IsVisible 为 true；复核者在自己的最小窗口程序里独立得到同样结果。两者都没有测全透明窗口的鼠标命中，也没有测真实全局快捷键。
+  0% 不透明度的真实窗口验证：实现者用 `GHOSTFISH_GUI=1 go test -tags gui -run TestZeroOpacityOnRealWindow` 得到 WindowOptions{Opacity:0} 实际为 1、SetOpacity(0) 后 Opacity() 为 0 且 IsVisible 为 true；复核者在自己的最小窗口程序里独立得到同样结果。当时两者均未测试全透明窗口的鼠标命中及真实全局快捷键。
+
+  补充结论（2026-11-10）：用户确认验证均无问题，并要求将任务全部标记完成；具体验证环境和步骤未提供。
 - [x] 5.3 运行 `openspec validate add-settings-controls --strict`；验证：变更校验通过。
