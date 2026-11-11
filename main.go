@@ -1,5 +1,5 @@
 // Command ghostfish 是摸鱼用的浮动浏览器：一个可调不透明度、可穿透鼠标的窗口，
-// 只在终端启动，窗口状态由全局快捷键控制。
+// 可从终端或 macOS 应用启动，窗口状态由托盘和全局快捷键控制。
 package main
 
 import (
@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync/atomic"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -35,6 +36,13 @@ type app struct {
 	pollTimer       *time.Timer
 	pollGeneration  uint64
 	keys            *shortcutManager
+	registered      *[4]bool
+	tray            *trayControls
+	trayAvailable   bool
+	trayPending     bool
+	trayUnknowns    int
+	trayEvidence    atomic.Uint64
+	trayWarning     func(string)
 	settingsOpen    bool
 	// settingsModalOpen 由 ui.Modal 直接改写（Escape 或点击背板关闭），
 	// 关闭后还要把窗口状态一起收尾，所以和 settingsOpen 分开记。
@@ -64,7 +72,7 @@ var version = "dev"
 
 func main() {
 	if len(os.Args) > 1 && (os.Args[1] == "-version" || os.Args[1] == "--version") {
-		fmt.Printf("ghostfish %s\n", version)
+		fmt.Printf("ghostfish %s\n", displayVersion(version, mygo.App.Version()))
 		return
 	}
 
@@ -134,15 +142,9 @@ func (a *app) start() {
 	// MyGo 把 WindowOptions 里的 0 当成未设置、换成 1，所以保存的 0% 要显示前
 	// 单独用 SetOpacity 应用一次。
 	a.setOpacity(a.st.Opacity)
-	a.showWindow()
-	if tab.showsAddress() {
-		mygo.App.Focus()
-		a.win.Focus()
-		a.focusAddress = true
-		a.win.Invalidate()
-	}
+	trayErr := a.createTray(mygo.NewTray)
 
-	var forced bool
+	var registered [4]bool
 	if runtime.GOOS == "darwin" {
 		if a.st.Settings == nil {
 			defaults := defaultSettings()
@@ -153,28 +155,48 @@ func (a *app) start() {
 		for _, failure := range a.keys.start(a.st.Settings.Shortcuts) {
 			fmt.Fprintf(os.Stderr, "ghostfish: 快捷键注册失败：%s\n", failure)
 		}
-		started := a.st.ClickThrough
-		var notes []string
-		a.st, notes = guardRecovery(a.keys.registered, a.st)
-		forced = a.st.ClickThrough != started
-		for _, note := range notes {
-			fmt.Fprintf(os.Stderr, "ghostfish: %s\n", note)
-		}
+		registered = a.keys.registered
 	} else {
-		a.st, forced = resolveStartState(a.registerHotkeys(), a.st)
-		if forced {
-			fmt.Fprintln(os.Stderr, "ghostfish: 穿透恢复快捷键不可用，已强制以不穿透状态启动")
-		}
+		registered = a.registerHotkeys()
+		a.registered = &registered
 	}
-	if forced {
-		a.save()
+	a.showStartupWindow(registered)
+	if tab.showsAddress() {
+		mygo.App.Focus()
+		a.win.Focus()
+		a.focusAddress = true
+		a.win.Invalidate()
 	}
-	a.setIgnoreMouse(a.st.ClickThrough)
+	a.reportTrayFailure(trayErr)
 	if err := a.installWindowDrag(); err != nil {
 		fmt.Fprintf(os.Stderr, "ghostfish: 窗口拖动快捷键不可用：%v\n", err)
 	}
 
 	reportState(a.st)
+}
+
+// showStartupWindow 在托盘失败或尚未确认时按已注册的恢复入口显示窗口。
+func (a *app) showStartupWindow(registered [4]bool) {
+	if !a.trayPending {
+		started := a.st.ClickThrough
+		var notes []string
+		a.st, notes = guardRecovery(registered, a.st, a.trayAvailable)
+		for _, note := range notes {
+			fmt.Fprintf(os.Stderr, "ghostfish: %s\n", note)
+		}
+		if started != a.st.ClickThrough {
+			a.save()
+		}
+	}
+	a.applyClickThrough()
+	a.showWindow()
+}
+
+// reportTrayFailure 在窗口显示并处理初始焦点后提示托盘创建失败。
+func (a *app) reportTrayFailure(err error) {
+	if err != nil {
+		a.warnTrayUnavailable(err.Error())
+	}
 }
 
 func (a *app) changeOpacity(delta float64) {
@@ -194,10 +216,8 @@ func (a *app) changeOpacity(delta float64) {
 }
 
 func (a *app) toggleClickThrough() {
-	if !a.canClickThrough() {
-		if !a.st.ClickThrough {
-			fmt.Fprintln(os.Stderr, "ghostfish: 快捷键没能恢复，先在设置里换一个可用的组合再开启穿透")
-		}
+	if !a.st.ClickThrough && !a.canClickThrough() {
+		fmt.Fprintln(os.Stderr, "ghostfish: 托盘和穿透快捷键均不可用，无法开启穿透")
 		return
 	}
 	a.st.ClickThrough = !a.st.ClickThrough
@@ -207,12 +227,12 @@ func (a *app) toggleClickThrough() {
 }
 
 func (a *app) toggleHidden() {
-	if a.keys != nil && !a.keys.registered[shortcutHidden] {
+	if a.windowShown() && !a.trayAvailable && !a.shortcutAvailable(shortcutHidden) {
 		return
 	}
 	if a.windowShown() {
 		a.hideWindow()
-		fmt.Fprintln(os.Stderr, "ghostfish: 窗口已隐藏，按同一个快捷键恢复")
+		fmt.Fprintln(os.Stderr, "ghostfish: 窗口已隐藏，可通过托盘或快捷键恢复")
 		return
 	}
 	a.showWindow()
@@ -225,7 +245,7 @@ func (a *app) save() {
 	}
 }
 
-// reportState 把当前状态写到终端，充当本版唯一的状态显示入口。
+// reportState 把当前状态写到终端。
 func reportState(st state) {
 	through := "关"
 	if st.ClickThrough {

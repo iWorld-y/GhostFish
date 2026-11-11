@@ -5,6 +5,7 @@ go 1.27.3
 require (
 	github.com/ebitengine/purego v0.11.1
 	github.com/egoist/mygo v0.8.3
+	github.com/godbus/dbus/v5 v5.2.2
 	golang.org/x/term v0.47.0
 )
 

@@ -166,14 +166,14 @@ func TestOpacityRestoreFailureKeepsClickThrough(t *testing.T) {
 	}
 }
 
-// 恢复失败后的强制状态期间不开再开穿透，与关闭设置的行为一致。
-func TestToggleThroughBlockedAfterRestoreFailure(t *testing.T) {
+// 隐藏快捷键恢复失败不应阻止使用可用的穿透快捷键。
+func TestToggleThroughAllowedWhenHiddenShortcutRestoreFails(t *testing.T) {
 	m, _, blocked := fakeShortcutManager()
 	defaults := defaultSettings()
 	if failures := m.start(defaults.Shortcuts); len(failures) != 0 {
 		t.Fatal(failures)
 	}
-	a := &app{st: state{Opacity: .85, ClickThrough: true, Settings: &defaults}, keys: m, statePath: filepath.Join(t.TempDir(), "state.json")}
+	a := &app{st: state{Opacity: .85, ClickThrough: true, Settings: &defaults}, keys: m, trayAvailable: true, trayWarning: func(string) {}, statePath: filepath.Join(t.TempDir(), "state.json")}
 	a.showWindow()
 	a.setIgnoreMouse(true)
 	a.openSettings()
@@ -181,12 +181,13 @@ func TestToggleThroughBlockedAfterRestoreFailure(t *testing.T) {
 	blocked[defaults.Shortcuts[shortcutHidden]] = true
 	a.endRecording()
 	a.closeSettings()
-	if !a.restoreFailed() {
-		t.Fatal("expected a restore failure")
+	if !a.restoreFailed() || a.st.ClickThrough || a.ignoringMouse {
+		t.Fatal("恢复失败后不应自动恢复穿透")
 	}
+	a.setTrayAvailable(false)
 	a.toggleClickThrough()
-	if a.st.ClickThrough || a.ignoringMouse {
-		t.Fatalf("恢复失败期间不能开启穿透：state=%+v ignoringMouse=%v", a.st, a.ignoringMouse)
+	if !a.st.ClickThrough || !a.ignoringMouse {
+		t.Fatalf("穿透快捷键可用时应允许穿透：state=%+v ignoringMouse=%v", a.st, a.ignoringMouse)
 	}
 }
 

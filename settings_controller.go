@@ -58,7 +58,7 @@ func (a *app) endRecording() {
 }
 
 // recoverableNote 说明强制可操作状态的原因，和具体哪个键失败一起显示。
-const recoverableNote = "窗口保持可见、不穿透，请重新保存可用的组合"
+const recoverableNote = "窗口已恢复可见、不穿透，请重新保存可用的组合"
 
 // noteRestoreFailure 把一条恢复失败说明追加到界面与终端共用的提示里，
 // 相同说明不重复追加；旧提示保留，避免后来的失败盖掉先前的原因。
@@ -103,9 +103,9 @@ func (a *app) noteRecoveryLost(registeredBefore [4]bool) {
 }
 
 // ensureRecoverable 只在录入或保存回滚真的没能恢复旧快捷键时，
-// 把窗口拉回可见、不穿透，直到用户重新保存成功。
+// 把窗口拉回可见、不穿透。用户仍可通过可用的入口主动更改状态。
 func (a *app) ensureRecoverable() {
-	if !a.restoreFailed() {
+	if !a.restoreFailed() || (!a.settingsOpen && a.trayAvailable) {
 		return
 	}
 	if a.st.ClickThrough {
@@ -123,20 +123,18 @@ func (a *app) restoreFailed() bool {
 	return a.recoveryLost
 }
 
-// canClickThrough 报告现在能否把窗口置于穿透：穿透快捷键必须可用，
-// 且不能处于恢复失败后的强制可操作状态。隐藏快捷键是否可用不参与这个判断，
-// 它在启动时只负责让窗口留在可见状态。
+// canClickThrough 判断托盘或穿透快捷键是否提供恢复入口。
 func (a *app) canClickThrough() bool {
-	if a.keys == nil {
+	if a.trayAvailable {
 		return true
 	}
-	return a.keys.registered[shortcutThrough] && !a.restoreFailed()
+	return a.shortcutAvailable(shortcutThrough)
 }
 
-// applyClickThrough 把生效的穿透状态同步到窗口。设置界面打开、穿透快捷键不可用
-// 或正处于恢复失败后的强制状态时，窗口保持可操作。
+// applyClickThrough 把生效的穿透状态同步到窗口，设置打开时保持窗口可操作。
 func (a *app) applyClickThrough() {
 	a.setIgnoreMouse(a.st.ClickThrough && !a.settingsOpen && a.canClickThrough())
+	a.syncTrayMenu()
 }
 
 func (a *app) closeSettings() {

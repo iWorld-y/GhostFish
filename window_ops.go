@@ -22,6 +22,7 @@ func (a *app) windowShown() bool {
 // showWindow 显示窗口并记录可见状态。
 func (a *app) showWindow() {
 	a.visible = true
+	defer a.syncTrayMenu()
 	if a.win != nil {
 		a.win.Show()
 	}
@@ -30,6 +31,7 @@ func (a *app) showWindow() {
 // hideWindow 隐藏窗口并记录可见状态。
 func (a *app) hideWindow() {
 	a.visible = false
+	defer a.syncTrayMenu()
 	if a.win != nil {
 		a.win.Hide()
 	}
