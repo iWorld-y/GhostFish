@@ -1,0 +1,132 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      is_release: ${{ steps.version.outputs.is_release }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: 校验版本和标签
+        id: version
+        shell: bash
+        run: ./script/release_metadata.sh
+
+  test:
+    needs: metadata
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test ./...
+      - run: go vet ./...
+
+  build-binary:
+    needs: [metadata, test]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            os: darwin
+            arch: arm64
+            name: ghostfish-darwin-arm64
+          - runner: macos-15-intel
+            os: darwin
+            arch: amd64
+            name: ghostfish-darwin-amd64
+          - runner: ubuntu-latest
+            os: linux
+            arch: amd64
+            name: ghostfish-linux-amd64
+          - runner: windows-latest
+            os: windows
+            arch: amd64
+            name: ghostfish-windows-amd64.exe
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: 运行本平台测试
+        run: go test ./...
+      - name: 构建和验证命令行程序
+        shell: bash
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 0
+          VERSION: ${{ needs.metadata.outputs.version }}
+          BINARY: ${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          go build -ldflags "-X main.version=v${VERSION}" -o "dist/$BINARY" .
+          test "$("dist/$BINARY" -version | tr -d '\r')" = "ghostfish v${VERSION}"
+          go version -m "dist/$BINARY" | grep -F "GOOS=${GOOS}"
+          go version -m "dist/$BINARY" | grep -F "GOARCH=${GOARCH}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: dist/${{ matrix.name }}
+          if-no-files-found: error
+          retention-days: 7
+
+  build-dmg:
+    needs: [metadata, test]
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: 构建通用应用和 DMG
+        run: go run github.com/egoist/mygo/cmd/mygo@v0.8.3 build -platform darwin/universal -o dist
+      - name: 校验 DMG
+        env:
+          VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          ./script/verify_macos_dmg.sh "$VERSION"
+          cp "dist/darwin-universal/ghostfish-${VERSION}.dmg" "dist/GhostFish-${VERSION}.dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GhostFish-${{ needs.metadata.outputs.version }}-dmg
+          path: dist/GhostFish-${{ needs.metadata.outputs.version }}.dmg
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: [metadata, build-binary, build-dmg]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs.metadata.outputs.is_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: 创建并校验草稿，随后发布
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+        run: ./script/publish_release.sh release-assets "$VERSION" "$TAG"
