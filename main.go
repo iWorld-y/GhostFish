@@ -3,7 +3,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -43,6 +42,7 @@ type app struct {
 	trayUnknowns    int
 	trayEvidence    atomic.Uint64
 	trayWarning     func(string)
+	authHooks       *authHooks
 	settingsOpen    bool
 	// settingsModalOpen 由 ui.Modal 直接改写（Escape 或点击背板关闭），
 	// 关闭后还要把窗口状态一起收尾，所以和 settingsOpen 分开记。
@@ -104,8 +104,6 @@ func (a *app) start() {
 	a.statePath = stateFilePath()
 	a.st = loadState(a.statePath)
 
-	// 启动网址仍在窗口显示前准备认证；空白启动不会发起请求。
-	authHost, cred := prepareAuth(context.Background(), a.target)
 	a.win = mygo.NewWindow(mygo.WindowOptions{
 		Title:           appName,
 		Hidden:          true,
@@ -125,20 +123,15 @@ func (a *app) start() {
 		a.win.Close()
 		return
 	}
-	if a.target != "" {
-		a.focusAddress = false
-		tab.startPageLoad(a.target, true)
-		if cred != nil {
-			tab.view.Page().SetAuthHandler(authHandler(authHost, cred))
-		}
-		if err := tab.view.Page().LoadURL(a.target); err != nil {
-			tab.failPageLoad(tab.view, fmt.Sprintf("载入网址失败：%v", err))
-			fmt.Fprintf(os.Stderr, "ghostfish: 载入网址失败：%v\n", err)
-		}
-	}
 	a.win.OnShow(a.startAddressPolling)
 	a.win.OnHide(a.stopAddressPolling)
-	a.win.OnClosed(a.stopAddressPolling)
+	a.win.OnClosed(func() {
+		a.stopAddressPolling()
+		for _, item := range a.tabs.items {
+			a.cancelTabAuth(item)
+			item.beginNavigation()
+		}
+	})
 	// MyGo 把 WindowOptions 里的 0 当成未设置、换成 1，所以保存的 0% 要显示前
 	// 单独用 SetOpacity 应用一次。
 	a.setOpacity(a.st.Opacity)
@@ -159,6 +152,9 @@ func (a *app) start() {
 	} else {
 		registered = a.registerHotkeys()
 		a.registered = &registered
+	}
+	if a.target != "" {
+		a.startNavigation(tab, a.target, true)
 	}
 	a.showStartupWindow(registered)
 	if tab.showsAddress() {

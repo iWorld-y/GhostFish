@@ -25,6 +25,12 @@ type browserTab struct {
 	startupLoading   bool
 	loadingInput     string
 	openingFirstPage bool
+	authURL          string
+	authSourceURL    string
+	authLoading      bool
+	authMainFrame    bool
+	authPrepared     *preparedAuth
+	authPrompt       *authPrompt
 }
 
 // showsAddress 只为尚未打开网页的新标签显示地址栏。

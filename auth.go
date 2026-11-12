@@ -3,12 +3,15 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -20,8 +23,8 @@ import (
 const (
 	// authEnv 让用户不落磁盘地给凭据，格式 user:pass。
 	authEnv = "GHOSTFISH_AUTH"
-	// secretPrefix 是钥匙串里条目的前缀，后面接主机名。
-	secretPrefix = "http-auth:"
+	// secretPrefix 使用独立版本，避免自动读取无法确认保护空间的旧条目。
+	secretPrefix = "http-auth:v2:"
 	probeTimeout = 8 * time.Second
 	// probeUserAgent 是探测请求用的身份，和后端 webview 的默认 UA 一致。
 	probeUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)"
@@ -29,8 +32,10 @@ const (
 
 // authNeed 是探测到的认证需求。
 type authNeed struct {
-	Host  string
-	Realm string
+	Scheme string
+	Host   string
+	Port   int
+	Realm  string
 }
 
 // probe 用 GET 请求一次网址，和浏览器做的事情一致。
@@ -80,8 +85,11 @@ func probeAuth(ctx context.Context, rawURL string) *authNeed {
 	if !strings.EqualFold(scheme, "Basic") {
 		return nil
 	}
-	// 质询里带的是不含端口的主机名，这里就用它，钥匙串的键也用它。
-	return &authNeed{Host: u.Hostname(), Realm: realm}
+	need, ok := authNeedForURL(rawURL, realm)
+	if !ok {
+		return nil
+	}
+	return &need
 }
 
 // parseChallenge 拆开 WWW-Authenticate，取出认证方式和 realm。
@@ -121,7 +129,7 @@ func verifyCredential(ctx context.Context, rawURL string, cred *mygo.AuthRespons
 		return false, 0, err
 	}
 	defer drain(resp)
-	return resp.StatusCode != http.StatusUnauthorized, resp.StatusCode, nil
+	return resp.StatusCode >= 200 && resp.StatusCode < 400, resp.StatusCode, nil
 }
 
 // resolveCredential 依次尝试环境变量、系统钥匙串、终端输入。
@@ -136,7 +144,7 @@ func resolveCredential(ctx context.Context, need *authNeed) *mygo.AuthResponse {
 	if ctx.Err() != nil {
 		return nil
 	}
-	if c := credentialFromKeychain(need.Host); c != nil {
+	if c := credentialFromKeychain(mygo.Secrets, *need); c != nil {
 		fmt.Fprintf(os.Stderr, "ghostfish: 用钥匙串里 %s 的凭据\n", need.Host)
 		return c
 	}
@@ -155,10 +163,56 @@ func credentialFromEnv() *mygo.AuthResponse {
 	return &mygo.AuthResponse{Username: user, Password: pass}
 }
 
-func secretKey(host string) string { return secretPrefix + host }
+// authSecretStore 对应系统凭据存储；测试使用内存替身。
+type authSecretStore interface {
+	Get(string) ([]byte, error)
+	Set(string, []byte) error
+}
 
-func credentialFromKeychain(host string) *mygo.AuthResponse {
-	raw, err := mygo.Secrets.Get(secretKey(host))
+// authNeedForURL 将网址归一化为包含协议、主机、端口和 realm 的保护空间。
+func authNeedForURL(rawURL, realm string) (authNeed, bool) {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.User != nil || u.Hostname() == "" {
+		return authNeed{}, false
+	}
+	scheme := strings.ToLower(u.Scheme)
+	port := 0
+	switch scheme {
+	case "http":
+		port = 80
+	case "https":
+		port = 443
+	default:
+		return authNeed{}, false
+	}
+	if u.Port() != "" {
+		port, err = strconv.Atoi(u.Port())
+		if err != nil || port < 1 || port > 65535 {
+			return authNeed{}, false
+		}
+	}
+	return authNeed{Scheme: scheme, Host: strings.ToLower(u.Hostname()), Port: port, Realm: realm}, true
+}
+
+// secretKey 使用固定长度摘要，避免很长的 realm 超出系统存储键长度限制。
+func secretKey(need authNeed) (string, error) {
+	if (need.Scheme != "http" && need.Scheme != "https") || need.Host == "" || need.Port < 1 || need.Port > 65535 {
+		return "", fmt.Errorf("无效的认证保护空间")
+	}
+	data, err := json.Marshal(need)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(data)
+	return secretPrefix + hex.EncodeToString(digest[:]), nil
+}
+
+func credentialFromKeychain(store authSecretStore, need authNeed) *mygo.AuthResponse {
+	key, err := secretKey(need)
+	if err != nil {
+		return nil
+	}
+	raw, err := store.Get(key)
 	if err != nil {
 		return nil
 	}
@@ -169,12 +223,16 @@ func credentialFromKeychain(host string) *mygo.AuthResponse {
 	return &c
 }
 
-func saveCredential(host string, cred *mygo.AuthResponse) error {
+func saveCredential(store authSecretStore, need authNeed, cred *mygo.AuthResponse) error {
+	key, err := secretKey(need)
+	if err != nil {
+		return err
+	}
 	raw, err := json.Marshal(cred)
 	if err != nil {
 		return err
 	}
-	return mygo.Secrets.Set(secretKey(host), raw)
+	return store.Set(key, raw)
 }
 
 // promptMu 防止多个标签页同时向同一终端读取凭据。
@@ -220,61 +278,22 @@ func promptCredential(ctx context.Context, need *authNeed) *mygo.AuthResponse {
 	})
 }
 
-// prepareAuth 为一个显式网址准备凭据；空网址不进行探测。
-func prepareAuth(ctx context.Context, rawURL string) (string, *mygo.AuthResponse) {
+// prepareAuth 在后台探测并查找凭据，不在验证成功之前保存。
+func (a *app) prepareAuth(ctx context.Context, rawURL string) *preparedAuth {
 	if rawURL == "" || ctx.Err() != nil {
-		return "", nil
+		return nil
 	}
 	need := probeAuth(ctx, rawURL)
-	if need == nil {
-		return "", nil
+	if need == nil || ctx.Err() != nil {
+		return nil
 	}
-	fmt.Fprintf(os.Stderr, "ghostfish: %s 要求认证（realm %q）\n", need.Host, need.Realm)
-	cred := resolveCredential(ctx, need)
+	cred := a.resolveAuth(ctx, need)
+	if cred == nil || ctx.Err() != nil {
+		return &preparedAuth{need: *need, url: rawURL}
+	}
+	ok, _, err := a.verifyAuth(ctx, rawURL, cred)
 	if ctx.Err() != nil {
-		return "", nil
+		return nil
 	}
-	if cred == nil {
-		fmt.Fprintln(os.Stderr, "ghostfish: 没拿到凭据，交给 webview 自己处理")
-		return "", nil
-	}
-	// 校验失败也交给网页尝试；探测请求与真实加载可能有差异。
-	ok, status, err := verifyCredential(ctx, rawURL, cred)
-	if ctx.Err() != nil {
-		return "", nil
-	}
-	if !ok {
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "ghostfish: 凭据校验请求失败（%v），仍然交给窗口试\n", err)
-		} else {
-			fmt.Fprintf(os.Stderr, "ghostfish: 凭据校验返回 %d，仍然交给窗口试\n", status)
-		}
-		fmt.Fprintln(os.Stderr, "ghostfish: 如果页面仍是 401，多半是用户名或密码不对")
-		return need.Host, cred
-	}
-	if err := saveCredential(need.Host, cred); err != nil {
-		fmt.Fprintf(os.Stderr, "ghostfish: 存进钥匙串失败（下次还要再输）：%v\n", err)
-	} else {
-		fmt.Fprintln(os.Stderr, "ghostfish: 凭据已存进钥匙串，下次不用再输")
-	}
-	return need.Host, cred
-}
-
-// authHandler 只向目标主机的 Basic 认证提供凭据，并在两次尝试后停止。
-func authHandler(host string, cred *mygo.AuthResponse) func(mygo.AuthRequest) mygo.AuthResponse {
-	attempts, warned := 0, false
-	return func(req mygo.AuthRequest) mygo.AuthResponse {
-		if req.IsProxy || !strings.EqualFold(req.Host, host) || !strings.EqualFold(req.Scheme, "basic") {
-			return mygo.AuthResponse{}
-		}
-		attempts++
-		if attempts > 2 {
-			if !warned {
-				warned = true
-				fmt.Fprintln(os.Stderr, "ghostfish: 凭据被服务器拒了，已停止重试；用户名或密码大概率不对")
-			}
-			return mygo.AuthResponse{}
-		}
-		return *cred
-	}
+	return &preparedAuth{need: *need, url: rawURL, credential: cred, verified: err == nil && ok}
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"strings"
 	"time"
 
@@ -17,25 +18,45 @@ func (a *app) createTab() (*browserTab, error) {
 	if err != nil {
 		return nil, err
 	}
+	return a.addTab(view), nil
+}
+
+// addTab 接入网页视图并将其选为当前标签。
+func (a *app) addTab(view *mygo.WebView) *browserTab {
+	previous := a.tabs.active
 	tab := a.tabs.add(view)
 	a.watchTabView(tab, view)
+	a.installAuthHandler(tab, view, "")
 	a.focusAddress = true
 	a.revealActiveTab = true
 	a.win.Invalidate()
-	return tab, nil
+	a.syncAuthTab(previous)
+	return tab
 }
 
 // watchTabView 只处理当前网页视图的导航、失败和标题事件。
 func (a *app) watchTabView(tab *browserTab, view *mygo.WebView) {
 	view.Page().OnWillNavigate(func(event *mygo.NavigateEvent) {
 		if tab.view == view {
+			prepared := tab.authPrepared
+			a.cancelTabAuth(tab)
 			tab.pageWillNavigate(event.UserInitiated)
+			if !event.UserInitiated {
+				a.saveVerifiedAuth(tab, prepared)
+			}
+			tab.authURL = event.URL
+			tab.authLoading = true
+			// 旧版 WebKitGTK 的导航事件可能来自子框架，不能据此确认主文档。
+			tab.authMainFrame = runtime.GOOS == "darwin" || runtime.GOOS == "windows"
+			a.installAuthHandler(tab, view, event.URL)
 		}
 	})
 	view.Page().OnDidNavigate(func(rawURL string) {
 		if tab.view != view {
 			return
 		}
+		tab.authLoading = false
+		tab.authMainFrame = false
 		changed := tab.commitPageLoad(rawURL)
 		if changed && a.tabs.active == tab {
 			a.focusAddress = false
@@ -48,6 +69,7 @@ func (a *app) watchTabView(tab *browserTab, view *mygo.WebView) {
 		if tab.view == view && tab.finishPageLoad(view.Page().URL()) {
 			a.win.Invalidate()
 		}
+		a.finishAuthLoad(tab, view, false)
 	})
 	view.Page().OnDidFailLoad(func(err *mygo.LoadError) {
 		if tab.failPageLoad(view, fmt.Sprintf("载入网址失败：%s", err.Description)) {
@@ -56,6 +78,7 @@ func (a *app) watchTabView(tab *browserTab, view *mygo.WebView) {
 			}
 			a.win.Invalidate()
 		}
+		a.finishAuthLoad(tab, view, true)
 	})
 	view.Page().OnPageTitleUpdated(func(event *mygo.TitleEvent) {
 		if tab.view != view {
@@ -79,6 +102,7 @@ func (a *app) replaceTabView(tab *browserTab) error {
 	old := tab.view
 	tab.view = view
 	a.watchTabView(tab, view)
+	a.installAuthHandler(tab, view, "")
 	old.Destroy()
 	a.win.Invalidate()
 	return nil
@@ -86,6 +110,7 @@ func (a *app) replaceTabView(tab *browserTab) error {
 
 // selectTab 显示已有标签页，并同步其当前网址。
 func (a *app) selectTab(tab *browserTab) {
+	previous := a.tabs.active
 	if a.tabs.active == tab || !a.tabs.selectTab(tab) {
 		return
 	}
@@ -96,10 +121,13 @@ func (a *app) selectTab(tab *browserTab) {
 	a.focusAddress = tab.showsAddress()
 	a.revealActiveTab = true
 	a.win.Invalidate()
+	a.syncAuthTab(previous)
 }
 
 // closeTab 释放网页视图；关闭最后一个标签页时关闭窗口。
 func (a *app) closeTab(tab *browserTab) {
+	previous := a.tabs.active
+	a.cancelTabAuth(tab)
 	wasActive := a.tabs.active == tab
 	removed, last := a.tabs.remove(tab)
 	if !removed {
@@ -122,11 +150,13 @@ func (a *app) closeTab(tab *browserTab) {
 		a.revealActiveTab = true
 	}
 	a.win.Invalidate()
+	a.syncAuthTab(previous)
 }
 
 // submitAddress 校验地址，并在后台准备认证后加载当前标签页。
 func (a *app) submitAddress(tab *browserTab) {
-	generation := tab.beginNavigation()
+	a.cancelTabAuth(tab)
+	tab.beginNavigation()
 	tab.pending = false
 	if tab.cancelPageLoad() && tab.view != nil {
 		if !tab.openedPage || tab.openingFirstPage {
@@ -152,29 +182,44 @@ func (a *app) submitAddress(tab *browserTab) {
 	tab.input = rawURL
 	tab.editing = true
 	tab.errorText = ""
+	a.startNavigation(tab, rawURL, false)
+}
+
+// startNavigation 在后台准备认证，始终在主线程检查标签与导航后才加载。
+func (a *app) startNavigation(tab *browserTab, rawURL string, startup bool) {
+	a.cancelTabAuth(tab)
+	generation := tab.beginNavigation()
+	view := tab.view
+	tab.authURL = rawURL
+	tab.authSourceURL = rawURL
+	tab.authLoading = true
 	tab.pending = true
+	tab.startPageLoad(rawURL, startup)
 	ctx, cancel := context.WithCancel(context.Background())
 	tab.cancelNavigation = cancel
 	go func() {
 		defer cancel()
-		host, cred := prepareAuth(ctx, rawURL)
-		mygo.RunOnMain(func() {
-			if !a.tabs.accepts(tab, generation) {
+		prepared := a.prepareAuth(ctx, rawURL)
+		if ctx.Err() != nil {
+			return
+		}
+		a.dispatchAuth(func() {
+			if ctx.Err() != nil || !a.tabs.accepts(tab, generation) || tab.view != view {
 				return
 			}
 			tab.pending = false
 			tab.cancelNavigation = nil
-			page := tab.view.Page()
-			if cred == nil {
-				page.SetAuthHandler(nil)
-			} else {
-				page.SetAuthHandler(authHandler(host, cred))
+			tab.authPrepared = prepared
+			a.installAuthHandler(tab, view, rawURL)
+			tab.authMainFrame = true
+			if err := a.loadAuthURL(tab, rawURL); err != nil {
+				tab.authLoading = false
+				tab.authMainFrame = false
+				tab.failPageLoad(view, fmt.Sprintf("载入网址失败：%v", err))
 			}
-			tab.startPageLoad(rawURL, false)
-			if err := page.LoadURL(rawURL); err != nil {
-				tab.failPageLoad(tab.view, fmt.Sprintf("载入网址失败：%v", err))
+			if a.win != nil {
+				a.win.Invalidate()
 			}
-			a.win.Invalidate()
 		})
 	}()
 }

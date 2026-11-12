@@ -2,8 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -147,35 +151,9 @@ func TestCredentialFromEnv(t *testing.T) {
 	}
 }
 
-func TestAuthHandler(t *testing.T) {
-	cred := &mygo.AuthResponse{Username: "user", Password: "pass"}
-	handle := authHandler("example.com", cred)
-	requests := []struct {
-		name    string
-		request mygo.AuthRequest
-		want    mygo.AuthResponse
-	}{
-		{"其他主机不提供凭据", mygo.AuthRequest{Host: "other.example.com", Scheme: "basic"}, mygo.AuthResponse{}},
-		{"代理不提供凭据", mygo.AuthRequest{Host: "example.com", Scheme: "basic", IsProxy: true}, mygo.AuthResponse{}},
-		{"其他认证方式不提供凭据", mygo.AuthRequest{Host: "example.com", Scheme: "digest"}, mygo.AuthResponse{}},
-		{"主机名忽略大小写", mygo.AuthRequest{Host: "EXAMPLE.COM", Scheme: "basic"}, *cred},
-		{"相同主机再试一次", mygo.AuthRequest{Host: "example.com", Scheme: "basic"}, *cred},
-		{"第三次停止提供", mygo.AuthRequest{Host: "example.com", Scheme: "basic"}, mygo.AuthResponse{}},
-		{"后续继续停止提供", mygo.AuthRequest{Host: "example.com", Scheme: "basic"}, mygo.AuthResponse{}},
-	}
-	for _, req := range requests {
-		t.Run(req.name, func(t *testing.T) {
-			if got := handle(req.request); got != req.want {
-				t.Fatalf("handle(%+v) = %+v, want %+v", req.request, got, req.want)
-			}
-		})
-	}
-}
-
 func TestPrepareAuthEmpty(t *testing.T) {
-	host, credential := prepareAuth(context.Background(), "")
-	if host != "" || credential != nil {
-		t.Fatalf("prepareAuth empty = %q, %+v; want no host or credential", host, credential)
+	if got := (&app{}).prepareAuth(context.Background(), ""); got != nil {
+		t.Fatalf("prepareAuth empty = %+v; want nil", got)
 	}
 }
 
@@ -189,30 +167,12 @@ func TestPrepareAuthForAddress(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	host, credential := prepareAuth(context.Background(), srv.URL)
-	if host != "127.0.0.1" || credential == nil || credential.Username != "user" || credential.Password != "wrong" {
-		t.Fatalf("prepareAuth = %q, %+v; want target host and environment credential", host, credential)
+	got := (&app{}).prepareAuth(context.Background(), srv.URL)
+	if got == nil || got.need.Host != "127.0.0.1" || got.credential == nil || got.credential.Username != "user" || got.credential.Password != "wrong" || got.verified {
+		t.Fatal("prepareAuth should retain the unverified environment credential for the target")
 	}
 	if got := requests.Load(); got != 2 {
 		t.Fatalf("requests = %d; want one probe and one credential validation", got)
-	}
-}
-
-func TestIndependentAuthHandlers(t *testing.T) {
-	first := authHandler("first.example", &mygo.AuthResponse{Username: "first", Password: "one"})
-	second := authHandler("second.example", &mygo.AuthResponse{Username: "second", Password: "two"})
-	firstRequest := mygo.AuthRequest{Host: "first.example", Scheme: "basic"}
-	secondRequest := mygo.AuthRequest{Host: "second.example", Scheme: "basic"}
-	if got := first(secondRequest); got.Username != "" {
-		t.Fatal("first host credentials were offered to a different host")
-	}
-	first(firstRequest)
-	first(firstRequest)
-	if got := first(firstRequest); got.Username != "" {
-		t.Fatal("first host should stop after two attempts")
-	}
-	if got := second(secondRequest); got.Username != "second" {
-		t.Fatal("first host attempts should not consume another host's retries")
 	}
 }
 
@@ -302,10 +262,9 @@ func TestCanceledProbeReturnsWithoutCredential(t *testing.T) {
 	}))
 	defer srv.Close()
 	ctx, cancel := context.WithCancel(context.Background())
-	result := make(chan *mygo.AuthResponse, 1)
+	result := make(chan *preparedAuth, 1)
 	go func() {
-		_, cred := prepareAuth(ctx, srv.URL)
-		result <- cred
+		result <- (&app{}).prepareAuth(ctx, srv.URL)
 	}()
 	<-entered
 	cancel()
@@ -316,5 +275,161 @@ func TestCanceledProbeReturnsWithoutCredential(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("canceled probe did not return")
+	}
+}
+
+// 没有终端时不得等待输入。
+func TestPromptCredentialWithoutTerminal(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	defer writer.Close()
+	original := os.Stdin
+	os.Stdin = reader
+	defer func() { os.Stdin = original }()
+	result := make(chan *mygo.AuthResponse, 1)
+	go func() {
+		result <- promptCredential(context.Background(), &authNeed{Host: "example.test", Realm: "test"})
+	}()
+	select {
+	case cred := <-result:
+		if cred != nil {
+			t.Fatal("没有终端时不应得到凭据")
+		}
+	case <-time.After(time.Second):
+		writer.Close()
+		<-result
+		t.Fatal("没有终端时等待了输入")
+	}
+}
+
+// 环境变量可用时不需要读取系统钥匙串。
+func TestResolveCredentialUsesEnvironmentFirst(t *testing.T) {
+	t.Setenv(authEnv, "local-user:local-pass")
+	got := resolveCredential(context.Background(), &authNeed{Host: "example.test"})
+	if got == nil || got.Username != "local-user" || got.Password != "local-pass" {
+		t.Fatal("没有优先使用环境变量凭据")
+	}
+}
+
+type memoryAuthStore struct {
+	entries map[string][]byte
+	reads   []string
+}
+
+func (m *memoryAuthStore) Get(key string) ([]byte, error) {
+	m.reads = append(m.reads, key)
+	value, ok := m.entries[key]
+	if !ok {
+		return nil, errors.New("not found")
+	}
+	return append([]byte(nil), value...), nil
+}
+
+func (m *memoryAuthStore) Set(key string, value []byte) error {
+	m.entries[key] = append([]byte(nil), value...)
+	return nil
+}
+
+// 钥匙串只按完整保护空间复用，旧的仅主机条目保留但不自动读取。
+func TestCredentialStoreProtectionSpace(t *testing.T) {
+	store := &memoryAuthStore{entries: map[string][]byte{"http-auth:example.test": []byte(`{"Username":"legacy","Password":"old"}`)}}
+	base, ok := authNeedForURL("https://EXAMPLE.test/private", "members")
+	if !ok {
+		t.Fatal("无法解析保护空间")
+	}
+	cred := &mygo.AuthResponse{Username: "local-user", Password: "local-pass"}
+	if err := saveCredential(store, base, cred); err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		name, url, realm string
+		match            bool
+	}{
+		{"默认端口等价", "https://example.test:443/other", "members", true},
+		{"不同端口", "https://example.test:8443/private", "members", false},
+		{"HTTPS 到 HTTP", "http://example.test:443/private", "members", false},
+		{"不同 realm", "https://example.test/private", "other", false},
+		{"不同主机", "https://other.test/private", "members", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			need, ok := authNeedForURL(tt.url, tt.realm)
+			if !ok {
+				t.Fatal("无法解析保护空间")
+			}
+			got := credentialFromKeychain(store, need)
+			if (got != nil) != tt.match {
+				t.Fatalf("保护空间匹配结果错误：%v", got != nil)
+			}
+		})
+	}
+	for _, key := range store.reads {
+		if key == "http-auth:example.test" {
+			t.Fatal("不应读取旧的仅主机条目")
+		}
+	}
+	if string(store.entries["http-auth:example.test"]) != `{"Username":"legacy","Password":"old"}` {
+		t.Fatal("不应修改旧的仅主机条目")
+	}
+}
+
+// 本机服务确认错误保护空间不会在校验请求中收到 Authorization。
+func TestPrepareAuthDoesNotSendOtherProtectionSpaceCredential(t *testing.T) {
+	for _, tt := range []struct {
+		name, storedScheme, storedRealm string
+		differentPort, legacy, wantSend bool
+	}{
+		{"相同保护空间", "http", "members", false, false, true},
+		{"不同端口", "http", "members", true, false, false},
+		{"HTTPS 凭据到 HTTP", "https", "members", false, false, false},
+		{"不同 realm", "http", "other", false, false, false},
+		{"旧的仅主机条目", "http", "members", false, true, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var authorized atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("Authorization") != "" {
+					authorized.Add(1)
+					w.WriteHeader(http.StatusOK)
+					return
+				}
+				w.Header().Set("WWW-Authenticate", `Basic realm="members"`)
+				w.WriteHeader(http.StatusUnauthorized)
+			}))
+			defer server.Close()
+			u, err := url.Parse(server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			u.Scheme = tt.storedScheme
+			if tt.differentPort {
+				u.Host = net.JoinHostPort(u.Hostname(), "1")
+			}
+			need, ok := authNeedForURL(u.String(), tt.storedRealm)
+			if !ok {
+				t.Fatal("无法解析已保存保护空间")
+			}
+			store := &memoryAuthStore{entries: make(map[string][]byte)}
+			if tt.legacy {
+				store.entries["http-auth:"+need.Host] = []byte(`{"Username":"local-user","Password":"local-pass"}`)
+			} else if err := saveCredential(store, need, &mygo.AuthResponse{Username: "local-user", Password: "local-pass"}); err != nil {
+				t.Fatal(err)
+			}
+			a := &app{authHooks: &authHooks{resolve: func(_ context.Context, need *authNeed) *mygo.AuthResponse {
+				return credentialFromKeychain(store, *need)
+			}}}
+			prepared := a.prepareAuth(context.Background(), server.URL)
+			if prepared == nil {
+				t.Fatal("应识别目标站点的 Basic 质询")
+			}
+			if got := authorized.Load() > 0; got != tt.wantSend {
+				t.Fatalf("授权头发送结果不符合预期：%v", got)
+			}
+			if (prepared.credential != nil) != tt.wantSend {
+				t.Fatal("读取的凭据与保护空间不符")
+			}
+		})
 	}
 }
