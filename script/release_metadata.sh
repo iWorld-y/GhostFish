@@ -3,7 +3,7 @@
 set -euo pipefail
 
 version="$(jq -er '.version | strings' mygo.json)"
-if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+if [[ ! "$version" =~ ^[1-9][0-9]*$ ]]; then
   echo "应用版本格式错误：$version" >&2
   exit 1
 fi
@@ -12,7 +12,7 @@ tag=""
 is_release=false
 case "${GITHUB_EVENT_NAME}" in
   push)
-    if [[ ! "${GITHUB_REF}" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    if [[ ! "${GITHUB_REF}" =~ ^refs/tags/v[1-9][0-9]*$ ]]; then
       echo "标签格式错误：${GITHUB_REF}" >&2
       exit 1
     fi

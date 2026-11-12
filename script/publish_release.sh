@@ -12,7 +12,7 @@ expected=(
   "ghostfish-windows-amd64.exe"
 )
 
-if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ || "$tag" != "v$version" ]]; then
+if [[ ! "$version" =~ ^[1-9][0-9]*$ || "$tag" != "v$version" ]]; then
   echo "无效版本或标签：$version / $tag" >&2
   exit 1
 fi
@@ -42,7 +42,7 @@ if ! jq -e --arg tag "$tag" '[.[][] | select(.tag_name == $tag)] | length == 0' 
 fi
 
 gh release create "$tag" "${files[@]}" --repo "$GITHUB_REPOSITORY" \
-  --verify-tag --draft --title "GhostFish ${version}" \
+  --verify-tag --draft --title "GhostFish ${tag}" \
   --notes "macOS DMG 使用临时签名，尚未经过 Apple 公证。安装步骤请参阅 README。"
 gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases?per_page=100" > "$response"
 expected_json="$(printf '%s\n' "${expected[@]}" | jq -R . | jq -s 'sort')"

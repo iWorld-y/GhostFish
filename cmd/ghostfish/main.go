@@ -11,7 +11,7 @@ import (
 	"github.com/egoist/mygo"
 )
 
-// version 由发布构建注入：go build -ldflags "-X main.version=v0.1.0" ./cmd/ghostfish。
+// version 由发布构建注入：go build -ldflags "-X main.version=v4" ./cmd/ghostfish。
 // 从源码直接构建时是 dev，方便分辨手上这个是不是下载来的。
 var version = "dev"
 

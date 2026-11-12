@@ -128,7 +128,7 @@ go vet ./...
 
 ### 构建和发布
 
-`mygo.json` 的 `version` 是应用包和发布工作流的版本来源。更新版本后，推送与其一致的 `vX.Y.Z` 标签会触发测试、四个命令行程序和通用 DMG 的构建与校验。全部通过后，工作流先创建草稿 Release，确认五个资产上传完成再发布；已有 Release 或草稿不会被覆盖。构建失败不会发布不完整的 Release。手动运行工作流只生成可下载的 Actions 产物，不创建 Release。
+`mygo.json` 的 `version` 是应用包和发布工作流的版本来源。从 `v4` 起使用正整数，每次发布递增 1，例如 `v4`、`v5`、`v6`；配置中只写数字字符串，例如 `"4"`，不加 `v`，不使用前导零、小数或预发布后缀。已有的 `v0.x.0` 标签保留。更新版本后，推送与其一致的 `vN` 标签会触发测试、四个命令行程序和通用 DMG 的构建与校验。全部通过后，工作流先创建草稿 Release，确认五个资产上传完成再发布；已有 Release 或草稿不会被覆盖。构建失败不会发布不完整的 Release。手动运行工作流只生成可下载的 Actions 产物，不创建 Release。
 
 本机可用 `go run github.com/egoist/mygo/cmd/mygo@v0.8.3 build -platform darwin/universal -o dist` 构建通用应用；生成 DMG 和临时签名需要 macOS。
 

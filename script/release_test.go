@@ -23,11 +23,16 @@ func TestReleaseMetadata(t *testing.T) {
 		name, version, event, ref string
 		ok, release               bool
 	}{
-		{"合法标签", "1.2.3", "push", "refs/tags/v1.2.3", true, true},
-		{"版本不一致", "1.2.3", "push", "refs/tags/v1.2.4", false, false},
-		{"非法标签", "1.2.3", "push", "refs/tags/v1.2.3-beta", false, false},
-		{"非法版本", "1.2", "workflow_dispatch", "refs/heads/main", false, false},
-		{"手动构建", "1.2.3", "workflow_dispatch", "refs/heads/main", true, false},
+		{"合法标签", "2", "push", "refs/tags/v2", true, true},
+		{"大版本号", "10086", "push", "refs/tags/v10086", true, true},
+		{"零版本", "0", "push", "refs/tags/v0", false, false},
+		{"前导零", "02", "push", "refs/tags/v02", false, false},
+		{"负数", "-2", "workflow_dispatch", "refs/heads/master", false, false},
+		{"旧标签格式", "2", "push", "refs/tags/v2.0.0", false, false},
+		{"版本不一致", "2", "push", "refs/tags/v3", false, false},
+		{"非法标签", "2", "push", "refs/tags/v2-beta", false, false},
+		{"旧版本格式", "1.2.3", "workflow_dispatch", "refs/heads/main", false, false},
+		{"手动构建", "2", "workflow_dispatch", "refs/heads/main", true, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -83,7 +88,7 @@ func TestPublishReleaseSafety(t *testing.T) {
 			if err := os.Mkdir(assetsDir, 0o700); err != nil {
 				t.Fatal(err)
 			}
-			names := []string{"GhostFish-1.2.3.dmg", "ghostfish-darwin-amd64", "ghostfish-darwin-arm64", "ghostfish-linux-amd64", "ghostfish-windows-amd64.exe"}
+			names := []string{"GhostFish-2.dmg", "ghostfish-darwin-amd64", "ghostfish-darwin-arm64", "ghostfish-linux-amd64", "ghostfish-windows-amd64.exe"}
 			assets := make([]map[string]string, 0, len(names))
 			for _, name := range names {
 				if err := os.WriteFile(filepath.Join(assetsDir, name), []byte("asset"), 0o600); err != nil {
@@ -94,7 +99,7 @@ func TestPublishReleaseSafety(t *testing.T) {
 			if tt.scenario == "missing-asset" {
 				assets = assets[:len(assets)-1]
 			}
-			body, _ := json.Marshal([]any{[]any{map[string]any{"tag_name": "v1.2.3", "draft": true, "assets": assets}}})
+			body, _ := json.Marshal([]any{[]any{map[string]any{"tag_name": "v2", "draft": true, "assets": assets}}})
 			response := filepath.Join(dir, "response")
 			if err := os.WriteFile(response, body, 0o600); err != nil {
 				t.Fatal(err)
@@ -105,8 +110,8 @@ printf '%s\n' "$*" >> "$FAKE_LOG"
 if [[ "$1" == api ]]; then
   if [[ -f "$FAKE_CREATED" ]]; then cat "$FAKE_RESPONSE"; exit 0; fi
   case "$FAKE_SCENARIO" in
-    exists) printf '[[{"tag_name":"v1.2.3","draft":false}]]'; exit 0 ;;
-    existing-draft) printf '[[{"tag_name":"v1.2.3","draft":true}]]'; exit 0 ;;
+    exists) printf '[[{"tag_name":"v2","draft":false}]]'; exit 0 ;;
+    existing-draft) printf '[[{"tag_name":"v2","draft":true}]]'; exit 0 ;;
     forbidden|network) exit 1 ;;
     *) printf '[[]]'; exit 0 ;;
   esac
@@ -123,7 +128,7 @@ exit 1
 				t.Fatal(err)
 			}
 			logPath := filepath.Join(dir, "calls")
-			cmd := exec.Command("bash", filepath.Join(root, "publish_release.sh"), assetsDir, "1.2.3", "v1.2.3")
+			cmd := exec.Command("bash", filepath.Join(root, "publish_release.sh"), assetsDir, "2", "v2")
 			cmd.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "GITHUB_REPOSITORY=owner/repo", "FAKE_SCENARIO="+tt.scenario, "FAKE_RESPONSE="+response, "FAKE_LOG="+logPath, "FAKE_CREATED="+filepath.Join(dir, "created"))
 			out, err := cmd.CombinedOutput()
 			if (err == nil) != tt.ok {
