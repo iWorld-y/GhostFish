@@ -129,7 +129,7 @@ go vet ./...
 
 `mygo.json` 的 `version` 是应用包和发布工作流的版本来源。从 `v4` 起使用正整数，每次发布递增 1，例如 `v4`、`v5`、`v6`；配置中只写数字字符串，例如 `"4"`，不加 `v`，不使用前导零、小数或预发布后缀。已有的 `v0.x.0` 标签保留。更新版本后，推送与其一致的 `vN` 标签会触发测试、Linux、Windows 命令行程序和两个 macOS 架构的 DMG 的构建与校验。全部通过后，工作流先创建草稿 Release，确认四个资产上传完成再发布；已有 Release 或草稿不会被覆盖。构建失败不会发布不完整的 Release。手动运行工作流只生成可下载的 Actions 产物，不创建 Release。
 
-本机可用 `go run github.com/egoist/mygo/cmd/mygo@v0.8.3 build -platform darwin/arm64 -o dist` 构建 Apple 芯片版，将平台改为 `darwin/amd64` 可构建 Intel 版。生成 DMG 和临时签名需要 macOS，发布校验在对应架构的运行环境中执行。macOS 后续仅发布这两个 DMG；v4 及更早版本的原有资产保留。
+本机可用 `go run github.com/egoist/mygo/cmd/mygo@v0.8.3 build -platform darwin/arm64 -o dist` 构建 Apple 芯片版，将平台改为 `darwin/amd64` 可构建 Intel 版。生成 DMG 和临时签名需要 macOS，发布校验在对应架构的运行环境中执行。macOS 后续仅发布这两个 DMG；v4 已按此方式重新打包，更早版本的原有资产保留。
 
 代码按功能组织，根目录保留模块、构建配置和项目说明，Go 入口放在 `cmd/ghostfish/`：
 
