@@ -25,7 +25,7 @@ macOS 用户可以打开 DMG，把 `GhostFish.app` 拖到 Applications，再从�
 需要 Go 1.27.3 或更高。项目使用上游 MyGo，编译时 Go 会按 `go.mod` 按需下载依赖。
 
 ```sh
-go build -o ghostfish .
+go build -o ghostfish ./cmd/ghostfish
 ./ghostfish
 ./ghostfish https://example.com
 ```
@@ -34,7 +34,7 @@ go build -o ghostfish .
 - 启动网址或地址栏网址不写协议时自动补 `https://`，只接受 HTTP 和 HTTPS。
 - 显式提供无效网址时打印错误并以非零状态退出；多给几个网址只认第一个。
 - 原先依赖不带网址退出的脚本，需要在启动前自行检查参数。
-- 想在终端里直接跑也行：`go run . https://example.com`。
+- 想在终端里直接跑也行：`go run ./cmd/ghostfish https://example.com`。
 
 ## 标签页和地址栏
 
@@ -132,18 +132,27 @@ go vet ./...
 
 本机可用 `go run github.com/egoist/mygo/cmd/mygo@v0.8.3 build -platform darwin/universal -o dist` 构建通用应用；生成 DMG 和临时签名需要 macOS。
 
-代码主要分为以下部分：
+代码按功能组织，根目录保留模块、构建配置和项目说明，Go 入口放在 `cmd/ghostfish/`：
 
-- `main.go`：启动流程、窗口创建、状态应用、隐藏/显示。
-- `window_ops.go`：窗口穿透、可见和不透明度的写入，并记录最近一次生效的值。
-- `browser.go`、`browser_ui.go`、`browser_ui_mac.go` 和 `tabs.go`：标签页、地址栏、macOS 标签栏与网页导航。
-- `auth.go`：HTTP Basic 认证与凭据处理。
-- `hotkeys.go`：四个全局快捷键的注册与失败处理。
-- `tray.go`、`tray_host_*.go`：托盘菜单、窗口状态同步和 Linux 宿主检查。
-- `hotkeys_repeat_darwin.go`：macOS 上不透明度快捷键的长按连发。
-- `settings.go`、`settings_controller.go`、`settings_ui.go`：设置数据与校验、草稿与保存流程、设置界面。
-- `shortcut_manager.go`：按动作记录快捷键注册结果，处理改键、交换和回滚。
-- `state.go`：状态读写、取值范围与损坏回落。
-- `target.go`：启动参数和地址栏共用的网址解析。
+| 目录或文件 | 职责 |
+| --- | --- |
+| `cmd/ghostfish/` | 启动参数、版本查询和退出码；使用 `go run ./cmd/ghostfish`，版本仍通过 `-X main.version` 注入 |
+| `internal/app/` | 创建主窗口，组装浏览器、设置和桌面组件，安排启动顺序 |
+| `internal/browser/` | 标签页、地址栏、网页导航、导航取消，以及跟随标签页的认证窗口 |
+| `internal/auth/` | HTTP Basic 探测、凭据验证、环境变量、钥匙串和终端输入 |
+| `internal/config/` | 设置数据、默认值、校验、状态文件读写与损坏回落；读取时显式传入平台能力 |
+| `internal/settings/` | 设置草稿、快捷键录入和设置界面，通过 `Host` 接口调用桌面操作 |
+| `internal/desktop/` | 窗口透明度与穿透、显示与隐藏、托盘、快捷键、原生拖动和恢复规则 |
+| `assets/` | 图标文件与托盘图标嵌入 |
+| `script/` | 发布脚本及对应测试 |
+
+`app` 负责组件组装，`browser` 调用 `auth`，`settings` 和 `desktop` 使用 `config`。设置界面只持有编辑草稿，生效状态由 `desktop` 持有；浏览器通过回调打开设置，不直接依赖设置组件。平台实现留在所属功能包中，用 `_darwin.go`、`_linux.go` 和构建标签隔离。
+
+单元测试随组件存放，设置与窗口恢复的联合测试放在 `internal/desktop/`。GUI 测试需要 macOS，并通过 `gui` 构建标签和 `GHOSTFISH_GUI=1` 显式启用。以下命令分别检查原生托盘和标签页认证窗口：
+
+```sh
+GHOSTFISH_GUI=1 go test -tags gui ./internal/desktop -run '^TestTrayNativeSmoke$' -count=1
+GHOSTFISH_GUI=1 go test -tags gui ./internal/browser -run '^TestAuthWindowsFollowTabs$' -count=1
+```
 
 行为规格在 `openspec/specs/`，提案与设计文档归档在 `openspec/changes/archive/`。

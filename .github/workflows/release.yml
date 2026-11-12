@@ -77,7 +77,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          go build -ldflags "-X main.version=v${VERSION}" -o "dist/$BINARY" .
+          go build -ldflags "-X main.version=v${VERSION}" -o "dist/$BINARY" ./cmd/ghostfish
           test "$("dist/$BINARY" -version | tr -d '\r')" = "ghostfish v${VERSION}"
           go version -m "dist/$BINARY" | grep -F "GOOS=${GOOS}"
           go version -m "dist/$BINARY" | grep -F "GOARCH=${GOARCH}"

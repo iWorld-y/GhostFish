@@ -2,6 +2,7 @@
   "name": "GhostFish",
   "identifier": "io.github.iworld-y.ghostfish",
   "version": "0.3.0",
+  "main": "./cmd/ghostfish",
   "icon": "assets/logo/ghostfish-color.png",
   "macos": {
     "minimumSystemVersion": "12.0",
