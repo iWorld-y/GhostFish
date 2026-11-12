@@ -88,7 +88,7 @@ func TestPublishReleaseSafety(t *testing.T) {
 			if err := os.Mkdir(assetsDir, 0o700); err != nil {
 				t.Fatal(err)
 			}
-			names := []string{"GhostFish-2.dmg", "ghostfish-darwin-amd64", "ghostfish-darwin-arm64", "ghostfish-linux-amd64", "ghostfish-windows-amd64.exe"}
+			names := []string{"GhostFish-2-arm64.dmg", "GhostFish-2-amd64.dmg", "ghostfish-linux-amd64", "ghostfish-windows-amd64.exe"}
 			assets := make([]map[string]string, 0, len(names))
 			for _, name := range names {
 				if err := os.WriteFile(filepath.Join(assetsDir, name), []byte("asset"), 0o600); err != nil {

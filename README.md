@@ -10,13 +10,12 @@
 
 | 文件 | 适用 |
 | --- | --- |
-| `GhostFish-<版本>.dmg` | macOS，Apple 芯片和 Intel 芯片 |
-| `ghostfish-darwin-arm64` | macOS，Apple 芯片 |
-| `ghostfish-darwin-amd64` | macOS，Intel 芯片 |
+| `GhostFish-<版本>-arm64.dmg` | macOS，Apple 芯片（ARM64） |
+| `GhostFish-<版本>-amd64.dmg` | macOS，Intel 芯片（x86_64） |
 | `ghostfish-linux-amd64` | Linux，x86_64 |
 | `ghostfish-windows-amd64.exe` | Windows，64 位 |
 
-macOS 用户可以打开 DMG，把 `GhostFish.app` 拖到 Applications，再从访达启动。应用包使用临时签名，未使用 Developer ID 签名，也未经过 Apple 公证；独立命令行程序同样未经公证。macOS 可能阻止首次打开。确认下载来源可信后，先尝试打开应用，再到「系统设置」的「隐私与安全性」中选择「仍要打开」；较旧的系统版本可能显示「系统偏好设置」。具体步骤见 [Apple 支持文档](https://support.apple.com/zh-cn/102445)。
+macOS 用户可以打开 DMG，把 `GhostFish.app` 拖到 Applications，再从访达启动。应用包使用临时签名，未使用 Developer ID 签名，也未经过 Apple 公证。macOS 可能阻止首次打开。确认下载来源可信后，先尝试打开应用，再到「系统设置」的「隐私与安全性」中选择「仍要打开」；较旧的系统版本可能显示「系统偏好设置」。具体步骤见 [Apple 支持文档](https://support.apple.com/zh-cn/102445)。
 
 `./ghostfish -version` 打印版本号；从源码直接构建出来的是 `dev`。
 
@@ -128,9 +127,9 @@ go vet ./...
 
 ### 构建和发布
 
-`mygo.json` 的 `version` 是应用包和发布工作流的版本来源。从 `v4` 起使用正整数，每次发布递增 1，例如 `v4`、`v5`、`v6`；配置中只写数字字符串，例如 `"4"`，不加 `v`，不使用前导零、小数或预发布后缀。已有的 `v0.x.0` 标签保留。更新版本后，推送与其一致的 `vN` 标签会触发测试、四个命令行程序和通用 DMG 的构建与校验。全部通过后，工作流先创建草稿 Release，确认五个资产上传完成再发布；已有 Release 或草稿不会被覆盖。构建失败不会发布不完整的 Release。手动运行工作流只生成可下载的 Actions 产物，不创建 Release。
+`mygo.json` 的 `version` 是应用包和发布工作流的版本来源。从 `v4` 起使用正整数，每次发布递增 1，例如 `v4`、`v5`、`v6`；配置中只写数字字符串，例如 `"4"`，不加 `v`，不使用前导零、小数或预发布后缀。已有的 `v0.x.0` 标签保留。更新版本后，推送与其一致的 `vN` 标签会触发测试、Linux、Windows 命令行程序和两个 macOS 架构的 DMG 的构建与校验。全部通过后，工作流先创建草稿 Release，确认四个资产上传完成再发布；已有 Release 或草稿不会被覆盖。构建失败不会发布不完整的 Release。手动运行工作流只生成可下载的 Actions 产物，不创建 Release。
 
-本机可用 `go run github.com/egoist/mygo/cmd/mygo@v0.8.3 build -platform darwin/universal -o dist` 构建通用应用；生成 DMG 和临时签名需要 macOS。
+本机可用 `go run github.com/egoist/mygo/cmd/mygo@v0.8.3 build -platform darwin/arm64 -o dist` 构建 Apple 芯片版，将平台改为 `darwin/amd64` 可构建 Intel 版。生成 DMG 和临时签名需要 macOS，发布校验在对应架构的运行环境中执行。macOS 后续仅发布这两个 DMG；v4 及更早版本的原有资产保留。
 
 代码按功能组织，根目录保留模块、构建配置和项目说明，Go 入口放在 `cmd/ghostfish/`：
 

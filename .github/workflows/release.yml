@@ -41,14 +41,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-15
-            os: darwin
-            arch: arm64
-            name: ghostfish-darwin-arm64
-          - runner: macos-15-intel
-            os: darwin
-            arch: amd64
-            name: ghostfish-darwin-amd64
           - runner: ubuntu-latest
             os: linux
             arch: amd64
@@ -90,25 +82,36 @@ jobs:
 
   build-dmg:
     needs: [metadata, test]
-    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: amd64
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-      - name: 构建通用应用和 DMG
-        run: go run github.com/egoist/mygo/cmd/mygo@v0.8.3 build -platform darwin/universal -o dist
+      - name: 运行本平台测试
+        run: go test ./...
+      - name: 构建应用和 DMG
+        run: go run github.com/egoist/mygo/cmd/mygo@v0.8.3 build -platform darwin/${{ matrix.arch }} -o dist
       - name: 校验 DMG
         env:
           VERSION: ${{ needs.metadata.outputs.version }}
+          ARCH: ${{ matrix.arch }}
         run: |
-          ./script/verify_macos_dmg.sh "$VERSION"
-          cp "dist/darwin-universal/ghostfish-${VERSION}.dmg" "dist/GhostFish-${VERSION}.dmg"
+          ./script/verify_macos_dmg.sh "$VERSION" "$ARCH"
+          cp "dist/darwin-${ARCH}/ghostfish-${VERSION}-${ARCH}.dmg" "dist/GhostFish-${VERSION}-${ARCH}.dmg"
       - uses: actions/upload-artifact@v4
         with:
-          name: GhostFish-${{ needs.metadata.outputs.version }}-dmg
-          path: dist/GhostFish-${{ needs.metadata.outputs.version }}.dmg
+          name: GhostFish-${{ needs.metadata.outputs.version }}-${{ matrix.arch }}-dmg
+          path: dist/GhostFish-${{ needs.metadata.outputs.version }}-${{ matrix.arch }}.dmg
           if-no-files-found: error
           retention-days: 7
 

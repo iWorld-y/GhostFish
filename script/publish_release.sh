@@ -5,9 +5,8 @@ assets_dir="$1"
 version="$2"
 tag="$3"
 expected=(
-  "GhostFish-${version}.dmg"
-  "ghostfish-darwin-amd64"
-  "ghostfish-darwin-arm64"
+  "GhostFish-${version}-arm64.dmg"
+  "GhostFish-${version}-amd64.dmg"
   "ghostfish-linux-amd64"
   "ghostfish-windows-amd64.exe"
 )
