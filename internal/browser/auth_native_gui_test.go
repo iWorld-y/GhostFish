@@ -37,6 +37,7 @@ func TestAuthFormNativeMouse(t *testing.T) {
 	var mouse func(uintptr, uint32, authTestPoint, uint32) uintptr
 	var key func(uintptr, uint16, bool) uintptr
 	var setInteger func(uintptr, uint32, int64)
+	var setUnicode func(uintptr, uint64, *uint16)
 	var post func(uint32, uintptr)
 	var release func(uintptr)
 	var create func(uintptr) uintptr
@@ -45,6 +46,7 @@ func TestAuthFormNativeMouse(t *testing.T) {
 	purego.RegisterLibFunc(&mouse, cg, "CGEventCreateMouseEvent")
 	purego.RegisterLibFunc(&key, cg, "CGEventCreateKeyboardEvent")
 	purego.RegisterLibFunc(&setInteger, cg, "CGEventSetIntegerValueField")
+	purego.RegisterLibFunc(&setUnicode, cg, "CGEventKeyboardSetUnicodeString")
 	purego.RegisterLibFunc(&post, cg, "CGEventPost")
 	purego.RegisterLibFunc(&release, cf, "CFRelease")
 	purego.RegisterLibFunc(&create, cg, "CGEventCreate")
@@ -138,6 +140,9 @@ func TestAuthFormNativeMouse(t *testing.T) {
 		if event == 0 {
 			t.Fatal("CGEventCreateKeyboardEvent 失败")
 		}
+		// 为合成键盘事件显式指定字符。
+		letter := uint16('a')
+		setUnicode(event, 1, &letter)
 		post(0, event)
 		release(event)
 	}
