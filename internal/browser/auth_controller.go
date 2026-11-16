@@ -23,7 +23,7 @@ type preparedAuth struct {
 	attempts   int
 }
 
-// authPrompt 是一个标签页的认证请求和输入窗口。
+// authPrompt 保存一个标签页的认证请求和输入。
 type authPrompt struct {
 	tab              *browserTab
 	view             *mygo.WebView
@@ -32,11 +32,10 @@ type authPrompt struct {
 	need             auth.Need
 	ctx              context.Context
 	cancel           context.CancelFunc
-	window           *mygo.Window
 	username         string
 	password         string
 	errorText        string
-	ready            bool // 已决定显示输入窗口，可在切回标签时恢复。
+	ready            bool // 已决定显示输入表单，可在切回标签时恢复。
 	busy             bool
 	awaitingDenial   bool
 	queuedCredential *mygo.AuthResponse
@@ -91,29 +90,20 @@ func (a *Browser) showAuth(p *authPrompt) {
 	if a.tabs.active != p.tab {
 		return
 	}
-	if p.window != nil {
-		if !p.window.IsVisible() {
-			p.window.Show()
-		}
-		return
-	}
 	if a.authHooks != nil && a.authHooks.show != nil {
 		a.authHooks.show(p)
-		return
 	}
-	a.openAuthWindow(p)
+	if a.win != nil {
+		a.win.Invalidate()
+	}
 }
 
-// syncAuthTab 只显示当前标签的认证窗口，隐藏窗口时保留认证状态。
+// syncAuthTab 在切换标签时恢复已准备好的认证表单。
 func (a *Browser) syncAuthTab(previous *browserTab) {
-	if previous == a.tabs.active {
-		return
-	}
-	if previous != nil && previous.authPrompt != nil && previous.authPrompt.window != nil {
-		previous.authPrompt.window.Hide()
-	}
-	if current := a.tabs.active; current != nil && current.authPrompt != nil && current.authPrompt.ready {
-		a.showAuth(current.authPrompt)
+	if previous != a.tabs.active {
+		if current := a.tabs.active; current != nil && current.authPrompt != nil && current.authPrompt.ready {
+			a.showAuth(current.authPrompt)
+		}
 	}
 }
 
@@ -238,11 +228,7 @@ func (a *Browser) handleAuthChallenge(tab *browserTab, view *mygo.WebView, req m
 				if !a.validAuthPrompt(p) {
 					return
 				}
-				if p.window == nil {
-					a.showAuth(p)
-				} else {
-					a.invalidateAuth(p)
-				}
+				a.showAuth(p)
 			})
 			return mygo.AuthResponse{}
 		}
@@ -358,8 +344,8 @@ func (a *Browser) retryAuth(p *authPrompt, cred *mygo.AuthResponse, verified boo
 }
 
 func (a *Browser) invalidateAuth(p *authPrompt) {
-	if a.validAuthPrompt(p) && p.window != nil {
-		p.window.Invalidate()
+	if a.validAuthPrompt(p) && a.tabs.active == p.tab && a.win != nil {
+		a.win.Invalidate()
 	}
 }
 
@@ -431,8 +417,8 @@ func (a *Browser) cancelTabAuth(tab *browserTab) {
 	p.cancel()
 	p.username, p.password = "", ""
 	p.queuedCredential = nil
-	if p.window != nil {
-		p.window.Close()
+	if a.tabs.active == tab && a.win != nil {
+		a.win.Invalidate()
 	}
 }
 

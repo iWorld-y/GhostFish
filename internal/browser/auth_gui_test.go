@@ -70,7 +70,7 @@ func TestAuthDialogWebViewBasic(t *testing.T) {
 				}
 			})
 		},
-		show: func(p *authPrompt) { a.openAuthWindow(p); prompts <- p },
+		show: func(p *authPrompt) { prompts <- p },
 	}
 	a.win = mygo.NewWindow(mygo.WindowOptions{Title: "Auth local test", Hidden: true, Width: 320, Height: 200, Content: ui.View(a.View)})
 	view, err := a.win.NewWebView(mygo.WebViewOptions{Page: mygo.PageOptions{Session: mygo.NewEphemeralSession()}})
@@ -97,8 +97,8 @@ func TestAuthDialogWebViewBasic(t *testing.T) {
 		t.Fatal("重定向后的 WebView 质询没有打开认证窗口")
 	}
 	mygo.RunOnMain(func() {
-		if prompt.need.Realm != "local-test" || prompt.window == nil || !prompt.window.IsVisible() || prompt.window.Opacity() != 1 || a.win.IsVisible() {
-			t.Errorf("认证窗口不可见或认证范围错误：%q", prompt.need.Realm)
+		if prompt.need.Realm != "local-test" || !prompt.ready || a.win.IsVisible() {
+			t.Errorf("认证表单状态或认证范围错误：%q", prompt.need.Realm)
 		}
 		prompt.username = "test-user"
 		prompt.password = "wrong"
@@ -187,7 +187,7 @@ func TestAuthDialogWhenProbeFails(t *testing.T) {
 				}
 			})
 		},
-		show: func(p *authPrompt) { a.openAuthWindow(p); prompts <- p },
+		show: func(p *authPrompt) { prompts <- p },
 	}
 	a.win = mygo.NewWindow(mygo.WindowOptions{Title: "Auth fallback test", Hidden: true, Width: 320, Height: 200, Content: ui.View(a.View)})
 	view, err := a.win.NewWebView(mygo.WebViewOptions{Page: mygo.PageOptions{Session: mygo.NewEphemeralSession()}})
