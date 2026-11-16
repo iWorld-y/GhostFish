@@ -1,6 +1,7 @@
 package browser
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -236,5 +237,73 @@ func TestSelectedTabTitleHasVisibleContrast(t *testing.T) {
 				t.Fatal("selected title is invisible against its background")
 			}
 		})
+	}
+}
+
+func TestAuthFormAppearsInsideSelectedTab(t *testing.T) {
+	var a Browser
+	first := a.tabs.add(nil)
+	first.title = "First"
+	second := a.tabs.add(nil)
+	second.title = "Second"
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p := &authPrompt{tab: first, ctx: ctx, cancel: cancel, ready: true, username: "first", password: "secret", errorText: "请重试"}
+	first.authPrompt = p
+	a.tabs.selectTab(first)
+	tester := ui.NewTester(a.View, 320, 400)
+	for _, label := range []string{"First", "Second", "用户名", "密码", "取消", "登录"} {
+		if _, ok := tester.Find(label); !ok {
+			t.Errorf("认证标签页缺少 %q", label)
+		}
+	}
+	a.tabs.selectTab(second)
+	tester.Frame()
+	if _, ok := tester.Find("用户名"); ok {
+		t.Fatal("其他标签页不应显示认证表单")
+	}
+	a.tabs.selectTab(first)
+	tester.Frame()
+	if _, ok := tester.Find("用户名"); !ok || p.username != "first" || p.password != "secret" || p.errorText != "请重试" {
+		t.Fatal("切回标签页应保留认证表单及输入")
+	}
+}
+
+func TestAuthFormInputAndScrollingAreIsolated(t *testing.T) {
+	var a Browser
+	first := a.tabs.add(nil)
+	second := a.tabs.add(nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	first.authPrompt = &authPrompt{tab: first, ctx: ctx, cancel: cancel, ready: true}
+	second.authPrompt = &authPrompt{tab: second, ctx: ctx, cancel: cancel, ready: true}
+	a.tabs.selectTab(first)
+	tester := ui.NewTester(a.View, 320, 200)
+	if err := tester.Click("用户名"); err != nil {
+		t.Fatal(err)
+	}
+	tester.Type("first")
+	a.showAuth(second.authPrompt)
+	tester.Frame()
+	if !tester.Focused("用户名") || a.tabs.active != first {
+		t.Fatal("后台认证不应切换标签或抢占焦点")
+	}
+	a.tabs.selectTab(second)
+	tester.Frame()
+	if err := tester.Click("用户名"); err != nil {
+		t.Fatal(err)
+	}
+	tester.Type("second")
+	a.tabs.selectTab(first)
+	tester.Frame()
+	if first.authPrompt.username != "first" || second.authPrompt.username != "second" {
+		t.Fatalf("输入不应跨标签共享：%q %q", first.authPrompt.username, second.authPrompt.username)
+	}
+	tester.Scroll(160, 160, 0, 1000)
+	if err := tester.Click("取消"); err != nil {
+		t.Fatalf("窄窗口滚动后应可取消：%v", err)
+	}
+	if first.authPrompt != nil {
+		t.Fatal("取消未清除认证")
 	}
 }

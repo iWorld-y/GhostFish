@@ -4,8 +4,10 @@ package browser
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"ghostfish/internal/auth"
 
@@ -13,7 +15,7 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
-// 认证窗口随标签切换隐藏和恢复，不丢失两个标签各自的输入。
+// 认证表单随标签切换，保留各标签的输入。
 func TestAuthWindowsFollowTabs(t *testing.T) {
 	if os.Getenv("GHOSTFISH_GUI") == "" {
 		t.Skip("需要隔离图形测试")
@@ -23,7 +25,7 @@ func TestAuthWindowsFollowTabs(t *testing.T) {
 	a := &Browser{}
 	a.win = mygo.NewWindow(mygo.WindowOptions{
 		Title: "Auth tabs test", Hidden: true, Width: 320, Height: 200,
-		Content: ui.View(func(c *ui.Context) { ui.Text(c, "认证标签测试") }),
+		Content: ui.View(a.View),
 	})
 	defer a.win.Destroy()
 	firstView, err := a.win.NewWebView(mygo.WebViewOptions{Page: mygo.PageOptions{Session: mygo.NewEphemeralSession()}})
@@ -36,6 +38,17 @@ func TestAuthWindowsFollowTabs(t *testing.T) {
 	}
 	thirdView, err := a.win.NewWebView(mygo.WebViewOptions{Page: mygo.PageOptions{Session: mygo.NewEphemeralSession()}})
 	if err != nil {
+		t.Fatal(err)
+	}
+	loaded := make(chan struct{}, 1)
+	firstView.Page().OnDidFinishLoad(func() { loaded <- struct{}{} })
+	firstView.Page().LoadHTML("<html><body><button id='item' onclick='window.testValue++'>点按</button></body></html>", "")
+	select {
+	case <-loaded:
+	case <-time.After(10 * time.Second):
+		t.Fatal("测试网页加载超时")
+	}
+	if _, err := firstView.Page().Eval("window.testValue = 41"); err != nil {
 		t.Fatal(err)
 	}
 	first := a.tabs.add(firstView)
@@ -57,61 +70,53 @@ func TestAuthWindowsFollowTabs(t *testing.T) {
 		})
 	}()
 
-	var firstWindow *mygo.Window
-	var firstVisible, secondVisible, firstKept, secondKept bool
-	var backgroundShown, switchedToSecond bool
+	var windowsBefore, windowsAfter int
 	mygo.RunOnMain(func() {
 		a.win.Show()
+		windowsBefore = len(mygo.Windows())
 		a.selectTab(first)
 		a.showAuth(firstPrompt)
-		firstWindow = firstPrompt.window
-		firstVisible = firstWindow != nil && firstWindow.IsVisible()
-	})
-	if !firstVisible {
-		t.Fatal("当前标签的认证窗口应当显示")
-	}
-
-	var thirdActive, restored bool
-	mygo.RunOnMain(func() {
-		third := a.addTab(thirdView)
-		thirdActive = a.tabs.active == third && !firstWindow.IsVisible()
-		a.selectTab(first)
-		restored = firstPrompt.window == firstWindow && firstWindow.IsVisible()
-		a.closeTab(third)
-	})
-	if !thirdActive || !restored {
-		t.Fatalf("新建标签后认证窗口未随标签切换：thirdActive=%v restored=%v", thirdActive, restored)
-	}
-
-	mygo.RunOnMain(func() {
 		a.showAuth(secondPrompt)
-		backgroundShown = secondPrompt.window != nil && secondPrompt.window.IsVisible()
-		a.selectTab(second)
-		firstVisible = firstWindow.IsVisible()
-		switchedToSecond = secondPrompt.window != nil && secondPrompt.window.IsVisible()
-		firstKept = first.authPrompt == firstPrompt && firstPrompt.ctx.Err() == nil && firstPrompt.username == "first" && firstPrompt.password == "first-secret" && firstPrompt.errorText == "请重试"
+		windowsAfter = len(mygo.Windows())
 	})
-	if firstVisible || backgroundShown || !switchedToSecond || !firstKept {
-		t.Fatalf("切换后认证状态错误：firstVisible=%v backgroundShown=%v secondVisible=%v firstKept=%v", firstVisible, backgroundShown, switchedToSecond, firstKept)
+	if windowsBefore != windowsAfter {
+		t.Fatal("认证不应创建独立窗口")
 	}
-
+	if !firstPrompt.ready || !secondPrompt.ready || a.tabs.active != first {
+		t.Fatal("后台认证不应改变当前标签")
+	}
 	mygo.RunOnMain(func() {
+		a.win.Hide()
+		if a.win.IsVisible() {
+			t.Error("主窗口未隐藏")
+		}
+		a.win.Show()
+		a.win.SetIgnoreMouseEvents(true)
+		a.win.SetOpacity(0.55)
+		if !a.win.IsVisible() || a.win.Opacity() < 0.54 || a.win.Opacity() > 0.56 {
+			t.Error("主窗口显示或不透明度错误")
+		}
+		a.win.SetIgnoreMouseEvents(false)
+		a.win.SetOpacity(1)
+		third := a.addTab(thirdView)
 		a.selectTab(first)
-		firstVisible = firstPrompt.window == firstWindow && firstWindow.IsVisible()
-		secondVisible = secondPrompt.window != nil && secondPrompt.window.IsVisible()
-		secondKept = second.authPrompt == secondPrompt && secondPrompt.ctx.Err() == nil && secondPrompt.username == "second" && secondPrompt.password == "second-secret"
+		a.closeTab(third)
+		a.selectTab(second)
+		a.selectTab(first)
 	})
-	if !firstVisible || secondVisible || !secondKept {
-		t.Fatalf("切回后认证状态错误：firstVisible=%v secondVisible=%v secondKept=%v", firstVisible, secondVisible, secondKept)
+	if first.authPrompt != firstPrompt || firstPrompt.username != "first" || firstPrompt.password != "first-secret" || firstPrompt.errorText != "请重试" || second.authPrompt != secondPrompt || secondPrompt.password != "second-secret" {
+		t.Fatal("切换标签应保留各自认证输入")
 	}
-
 	mygo.RunOnMain(func() {
 		a.selectTab(second)
 		a.closeTab(second)
-		firstVisible = firstPrompt.window == firstWindow && firstWindow.IsVisible()
-		secondKept = second.authPrompt == nil && secondPrompt.ctx.Err() != nil && secondPrompt.password == ""
 	})
-	if !firstVisible || !secondKept {
-		t.Fatalf("关闭当前标签后认证状态错误：firstVisible=%v secondCleared=%v", firstVisible, secondKept)
+	mygo.RunOnMain(func() { a.cancelTabAuth(first) })
+	value, err := firstView.Page().Eval("(document.getElementById('item').click(), window.testValue)")
+	if err != nil || fmt.Sprint(value) != "42" {
+		t.Fatalf("认证结束后网页状态或交互异常：%v %v", value, err)
+	}
+	if a.tabs.active != first || second.authPrompt != nil || secondPrompt.ctx.Err() == nil || secondPrompt.password != "" {
+		t.Fatal("关闭标签应取消对应认证并清除密码")
 	}
 }

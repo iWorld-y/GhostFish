@@ -19,7 +19,11 @@ func (a *Browser) View(c *ui.Context) {
 		if tab.showsAddress() {
 			a.addressBar(c, tab)
 		}
-		ui.WebView(c, tab.view).Grow(1)
+		if p := tab.authPrompt; p != nil && p.ready {
+			a.authDialog(c, p)
+		} else {
+			ui.WebView(c, tab.view).Grow(1)
+		}
 	})
 
 }
