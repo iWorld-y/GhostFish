@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GhostFish 设计基线 · 交互原型</title>
+<link rel="stylesheet" href="assets/tokens.css"><link rel="stylesheet" href="assets/components.css"><link rel="stylesheet" href="assets/layout.css">
+<script defer src="assets/ui.js"></script><script defer src="assets/prototype.js"></script>
+</head>
+<body>
+<header class="site-header"><a class="brand" href="index.html"><span class="brand-name">GhostFish</span><span class="brand-rule"></span><span class="brand-desc">设计基线</span></a><nav class="top-links" aria-label="设计基线导航"><a href="index.html" aria-current="page">交互原型</a><a href="components.html">组件与规范</a><a href="DESIGN.md">DESIGN.md ↗</a></nav></header>
+<div class="workspace">
+<aside class="sidebar"><div class="sidebar-section"><h2 class="sidebar-label">界面与状态</h2><nav class="scene-nav" aria-label="选择演示场景">
+<button class="scene-button" data-scene="browse" aria-current="true"><span class="scene-number">01</span>浮动浏览器</button>
+<button class="scene-button" data-scene="blank"><span class="scene-number">02</span>新标签页</button>
+<button class="scene-button" data-scene="settings"><span class="scene-number">03</span>窗口设置</button>
+<button class="scene-button" data-scene="auth"><span class="scene-number">04</span>身份验证</button>
+<button class="scene-button" data-scene="failure"><span class="scene-number">05</span>导航失败</button>
+<button class="scene-button" data-scene="through"><span class="scene-number">06</span>鼠标穿透</button>
+<button class="scene-button" data-scene="hidden"><span class="scene-number">07</span>隐藏与恢复</button>
+</nav></div>
+<div class="sidebar-section secondary-nav"><h2 class="sidebar-label">设计系统</h2><a class="sidebar-link" href="components.html#foundations">颜色与字体</a><a class="sidebar-link" href="components.html#controls">控件与状态</a><a class="sidebar-link" href="components.html#patterns">交互组合</a></div>
+<div class="sidebar-note"><span class="badge">macOS 基线</span><p>沿用关联源码中的现有布局与交互。</p><p>网页与系统操作均为本地模拟。</p></div></aside>
+<main class="main-content">
+<div class="page-title-row"><div><p class="eyebrow">GHOSTFISH / INTERFACE</p><h1 id="scene-title">浮动浏览器</h1><p class="page-intro" id="scene-description">标签位于顶部，网页提交后隐藏地址栏。</p></div><label class="gf-controls"><span class="toolbar-label">外观</span><select id="theme" class="theme-select" aria-label="选择外观"><option value="light">浅色</option><option value="dark">深色</option><option value="system">跟随系统</option></select></label></div>
+<section class="preview-panel" aria-label="GhostFish 状态原型">
+<div class="preview-toolbar"><div class="gf-controls"><span class="badge"><span class="status-dot"></span>交互演示</span><span class="toolbar-label">原生窗口参考 960 × 720</span></div><button class="gf-button" id="reset">重置演示</button></div>
+<div class="desktop">
+<div class="desktop-bar"><span>演示桌面</span><div class="tray-wrapper"><button id="tray-trigger" class="gf-button" aria-haspopup="menu" aria-expanded="false" aria-controls="tray-menu">GhostFish 托盘 ▾</button><div class="gf-menu tray-popover" id="tray-menu" role="menu" hidden><button id="through-toggle" role="menuitemcheckbox" aria-checked="false"><span class="menu-check" id="through-check"></span><span>鼠标穿透<small id="through-subtitle"></small></span></button><button id="visibility-toggle" role="menuitem"><span class="menu-check"></span><span id="visibility-label">隐藏窗口</span></button><hr role="separator"><button id="quit" role="menuitem"><span class="menu-check"></span>退出</button></div></div></div>
+<div class="scene-windows" id="scene-windows">
+<section class="window-frame" id="window-frame" aria-label="GhostFish 浏览器窗口">
+<div class="gf-tabbar"><div class="window-controls" aria-label="窗口控制"><button class="close" id="window-close" aria-label="关闭窗口并退出"><span>×</span></button><button class="hide" id="window-hide" aria-label="隐藏窗口"><span>−</span></button><button class="grow" id="window-grow" aria-label="切换演示窗口尺寸"><span>+</span></button></div><div id="tab-list" class="gf-tabs" role="tablist" aria-label="浏览器标签"></div><button class="gf-icon-button gf-plus" id="add-tab" aria-label="新建标签页" title="新建标签页"></button><div class="gf-tab-spacer"></div><button class="gf-icon-button" id="open-settings" aria-label="设置" title="设置"></button></div>
+<div id="address-area"></div><div class="web-content" id="web-content"></div>
+</section>
+<div id="hidden-placeholder" class="hidden-placeholder" hidden><div><h2 id="hidden-title">窗口已隐藏</h2><p id="hidden-description">标签与网页仍然保留，可通过托盘恢复。</p><button class="gf-button" id="restore-window">显示窗口</button></div></div>
+<section class="gf-auth" id="auth-window" aria-label="独立网站认证窗口" hidden></section>
+</div>
+<div class="preview-status"><span>不透明度 <b id="opacity-value">85%</b></span><span>穿透 <b id="through-value">已关闭</b></span><span>窗口 <b id="visible-value">显示中</b></span><span>标签 <b id="tab-count">2</b></span></div>
+</div></section>
+<div class="preview-toolbar"><div class="gf-controls"><label for="opacity-range" class="toolbar-label">演示不透明度</label><button class="gf-button" id="opacity-down" aria-label="不透明度降低 10 个百分点">−</button><input type="range" id="opacity-range" min="0" max="100" value="85" step="1" aria-label="演示不透明度" style="width:120px;accent-color:var(--accent)"><button class="gf-button" id="opacity-up" aria-label="不透明度提高 10 个百分点">+</button></div><label class="gf-controls" id="auth-options" hidden><span class="toolbar-label">登录后的模拟结果</span><select id="auth-result" class="theme-select"><option value="error">认证失败</option><option value="success">认证通过</option></select></label></div>
+<div class="scene-detail"><section><h2>交互规则</h2><ul id="behavior-rules"></ul></section><section><h2>原型范围</h2><p>外层导航、场景切换和状态条仅用于设计演示。登录信息不发送、不保存；窗口控制不影响真实桌面。</p></section></div>
+<div class="source-line">源码依据 <code id="source-text">internal/browser/browser_ui_mac.go</code></div>
+<p id="terminal-line" class="log-line">ghostfish: 不透明度 85%，穿透关</p><div id="notice" class="sr-only" role="status" aria-live="polite"></div>
+</main></div>
+<dialog class="gf-dialog" id="settings-dialog" aria-labelledby="settings-title"><form id="settings-form" class="settings-form" novalidate>
+<div class="settings-heading"><h2 id="settings-title">设置</h2><button type="button" class="gf-button" aria-label="关闭设置" data-close-settings>×</button></div><hr class="gf-divider">
+<div class="settings-body"><h3>不透明度范围</h3><div class="range-fields"><label class="gf-field">下限<span class="range-input"><input id="min-opacity" class="gf-input" type="text" inputmode="numeric" aria-label="不透明度下限" aria-describedby="settings-error"><span>%</span></span></label><label class="gf-field">上限<span class="range-input"><input id="max-opacity" class="gf-input" type="text" inputmode="numeric" aria-label="不透明度上限" aria-describedby="settings-error"><span>%</span></span></label></div>
+<h3>快捷键</h3><p class="gf-helper">快捷键可能与其他应用共享，或被系统、其他应用拦截；注册成功也不代表本应用一定能收到按键。若按键被拦截，可能无法用快捷键恢复穿透或隐藏，建议选择不会被占用的组合。</p><div id="shortcut-list"></div>
+<h3>窗口拖动修饰键</h3><div class="drag-options"><label class="gf-check"><input type="checkbox" data-modifier="meta">Command</label><label class="gf-check"><input type="checkbox" data-modifier="ctrl">Control</label><label class="gf-check"><input type="checkbox" data-modifier="alt">Option</label><label class="gf-check"><input type="checkbox" data-modifier="shift">Shift</label></div><p id="settings-error" class="gf-error" role="alert"></p>
+</div><div class="gf-footer"><button class="gf-button" type="button" data-close-settings>取消</button><button class="gf-button primary" type="submit">保存</button></div>
+</form></dialog>
+<noscript>请启用 JavaScript 以使用交互原型。设计说明可直接阅读 DESIGN.md。</noscript>
+</body></html>

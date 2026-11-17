@@ -1,0 +1,61 @@
+/* 原型与组件目录共用的 GhostFish 控件。 */
+* { box-sizing: border-box; }
+body { margin: 0; font-family: var(--font-ui); font-size: var(--text-body); line-height: 1.6; color: var(--text); background: var(--app-bg); }
+button,input,select { font: inherit; }
+button,a,input,select { -webkit-tap-highlight-color: transparent; }
+button { cursor: pointer; }
+a { color: var(--accent); text-underline-offset: 4px; }
+a:hover { color: var(--accent-hover); }
+button:disabled { cursor: not-allowed; opacity: .5; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+[hidden] { display: none !important; }
+svg { flex: none; }
+.gf-icon { width: var(--icon-size); height: var(--icon-size); fill: none; stroke: currentColor; stroke-width: var(--icon-stroke); stroke-linecap: round; stroke-linejoin: round; }
+.gf-button { min-height: var(--input-height); padding: var(--s1) var(--s3); border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); color: var(--text); font-size: var(--text-ui); display: inline-flex; align-items: center; justify-content: center; gap: var(--s2); transition: background var(--motion-fast) ease-out; white-space: nowrap; }
+.gf-button:hover:not(:disabled),.gf-button.is-hover { background: var(--surface-hover); }
+.gf-button.primary { background: var(--accent); color: var(--surface); border-color: var(--accent); }
+.gf-button.primary:hover:not(:disabled) { background: var(--accent-hover); }
+.gf-button.danger { color: var(--danger); }
+.gf-icon-button { width: var(--gear-width); min-height: var(--bar-height); padding: 0; border: 0; border-radius: 0; display: inline-flex; justify-content: center; align-items: center; background: transparent; color: var(--text); }
+.gf-icon-button:hover { background: var(--surface-hover); }
+.gf-input { display: block; width: 100%; min-width: 0; min-height: var(--input-height); padding: var(--s1) var(--s2); border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); color: var(--text); font-size: var(--text-ui); line-height: 1.5; }
+.gf-input::placeholder { color: var(--muted); opacity: 1; }
+.gf-input:focus { border-color: var(--focus); outline: 2px solid var(--focus); outline-offset: 1px; }
+.gf-input[aria-invalid='true'] { border-color: var(--danger); }
+.gf-input:disabled { background: var(--app-bg); opacity: .65; }
+.gf-field { display: flex; flex-direction: column; gap: var(--s1-half); min-width: 0; font-size: var(--text-ui); }
+.gf-check { display: flex; align-items: center; gap: var(--s2); font-size: var(--text-ui); cursor: pointer; }
+.gf-check input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+.gf-error { color: var(--danger); font-size: var(--text-ui); margin: 0; overflow-wrap: anywhere; }
+.gf-helper { font-size: var(--text-xs); color: var(--muted); margin: 0; line-height: 1.6; }
+.gf-tabbar { min-height: var(--bar-height); height: var(--bar-height); display: flex; align-items: stretch; border-bottom: 1px solid var(--border); background: var(--app-bg); font-size: var(--text-ui); }
+.gf-tabs { display: flex; min-width: 0; overflow-x: auto; scrollbar-width: thin; align-items: stretch; }
+.gf-tab { display: flex; flex: none; align-items: center; border-right: 1px solid var(--border); }
+.gf-tab.is-active { border-left: 1px solid var(--border); background: var(--surface); }
+.gf-tab:hover { background: var(--surface-hover); }
+.gf-tab-label { padding: 0 var(--s3); min-width: 72px; max-width: var(--tab-label-max); height: calc(var(--bar-height) - 6px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: none; color: var(--text); border: none; font-size: var(--text-ui); }
+.gf-tab-close { width: var(--close-width); min-height: calc(var(--bar-height) - 6px); }
+.gf-plus { width: var(--plus-width); flex: none; }
+.gf-tab-spacer { min-width: 32px; flex: 1; }
+.gf-address { padding: var(--s1) var(--s2); display: flex; flex-direction: column; gap: var(--s1); background: var(--app-bg); }
+.gf-controls { display: flex; gap: var(--s2); align-items: center; }
+.gf-footer { display: flex; justify-content: flex-end; align-items: center; gap: var(--s2); }
+.gf-divider { border: 0; border-top: 1px solid var(--border); margin: 0; }
+.gf-shortcut-row { display: flex; align-items: center; gap: var(--s2); justify-content: space-between; padding: var(--s2) 0; border-bottom: 1px solid var(--border); font-size: var(--text-ui); }
+.gf-shortcut { min-width: 110px; font-variant-numeric: tabular-nums; }
+.gf-shortcut.is-recording { outline: 2px solid var(--focus); outline-offset: 1px; color: var(--accent); }
+.gf-auth { width: min(var(--auth-width), 100%); min-width: 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-window); box-shadow: var(--shadow-window); color: var(--text); font-size: var(--text-ui); }
+.gf-auth-caption { padding: var(--s2) var(--s3); background: var(--app-bg); border-bottom: 1px solid var(--border); border-radius: var(--radius-window) var(--radius-window) 0 0; font-size: var(--text-xs); text-align: center; }
+.gf-auth-form { min-height: 340px; padding: var(--s5); display: flex; flex-direction: column; gap: var(--s3); }
+.gf-auth-form h2 { font-size: var(--text-title); margin: 0; line-height: 1.5; }
+.gf-auth-form p { margin: 0; overflow-wrap: anywhere; }
+.gf-auth-form .gf-footer { margin-top: auto; padding-top: var(--s3); }
+.gf-menu { width: 224px; padding: var(--s1); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-control); box-shadow: var(--shadow-window); }
+.gf-menu button { display: flex; align-items: center; width: 100%; gap: var(--s2); padding: var(--s1) var(--s2); border: 0; border-radius: var(--s1); color: var(--text); background: none; font-size: var(--text-ui); text-align: left; }
+.gf-menu button:hover { color: var(--surface); background: var(--accent); }
+.gf-menu .menu-check { width: 16px; flex: none; }
+.gf-menu small { display: block; color: inherit; font-size: var(--text-xs); }
+.gf-menu hr { margin: var(--s1) 0; border: 0; border-top: 1px solid var(--line); }
+.badge { display: inline-flex; align-items: center; gap: var(--s1-half); padding: 2px var(--s2); border: 1px solid var(--border); border-radius: var(--s1); font-size: var(--text-xs); color: var(--muted); background: var(--surface); white-space: nowrap; }
+.status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }

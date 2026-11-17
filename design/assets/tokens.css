@@ -1,0 +1,30 @@
+/* GhostFish 设计变量。精确来源及网页映射差异见 DESIGN.md。 */
+:root {
+  color-scheme: light;
+  --font-ui: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  --font-display: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
+  --text-xs: 12px; --text-sm: 13px; --text-ui: 14px; --text-body: 16px; --text-title: 18px;
+  --text-heading: clamp(24px, 2.4vw, 32px);
+  --s1: 4px; --s1-half: 6px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 20px; --s6: 24px; --s8: 32px; --s10: 40px; --s12: 48px;
+  --app-bg: #f5f5f7; --surface: #ffffff; --surface-hover: #e9e9ed; --canvas: #e7e8eb;
+  --text: #242429; --muted: #62626b; --border: #d4d4da; --line: #e6e6ea;
+  --accent: #005fc7; --accent-hover: #004b9e; --accent-soft: #e9f1fc; --danger: #b4232d;
+  --success: #296346; --overlay: #16182052; --focus: #0066cc;
+  --radius-control: 6px; --radius-window: 10px; --radius-modal: 12px;
+  --bar-height: 36px; --tab-label-max: 160px; --close-width: 28px; --plus-width: 32px; --gear-width: 36px;
+  --icon-size: 18px; --icon-stroke: 1.6; --input-height: 32px; --settings-width: 400px; --auth-width: 420px;
+  --shadow-window: 0 20px 48px #12172320, 0 2px 8px #12172314;
+  --shadow-modal: 0 24px 64px #00000038;
+  --motion-fast: 160ms; --motion-exit: 100ms; --motion-standard: 240ms;
+  --preview-opacity: .85;
+}
+[data-theme='dark'] {
+  color-scheme: dark;
+  --app-bg: #1e1e1e; --surface: #29292c; --surface-hover: #3a3a40; --canvas: #151517;
+  --text: #f0f0f3; --muted: #b2b2bc; --border: #55555f; --line: #3a3a41;
+  --accent: #95c7ff; --accent-hover: #bbdcff; --accent-soft: #223a53; --danger: #ff9fa6;
+  --success: #94d3b1; --overlay: #0000008f; --focus: #9bcbff;
+  --shadow-window: 0 20px 48px #00000060, 0 2px 8px #00000040;
+}
+@media(prefers-reduced-motion:reduce) { :root { --motion-fast: 0ms; --motion-exit: 0ms; --motion-standard: 0ms; } }
